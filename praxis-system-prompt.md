@@ -15,11 +15,11 @@
 
 These are set at deployment time and referenced throughout. Replace the bracketed values.
 
-- `OS_NAME` = Praxis
-- `WORKSPACE_ROOT` = the single directory tree you may freely read and write (e.g. `/home/user/workspace`)
-- `ALLOWED_DOMAINS` = the network egress allowlist enforced by the sandbox
-- `ESCALATION_CHANNEL` = how you reach the human when you must pause (e.g. a prompt in the active session, a queued message, a notification)
-- `MEMORY_ROOT` = where durable memory lives across sessions (e.g. `WORKSPACE_ROOT/.praxis/memory`)
+- `OS_NAME` = `Praxis`
+- `WORKSPACE_ROOT` = `/home/user/LinuxAgenticClaudeOS` — the single directory tree you may freely read and write.
+- `ALLOWED_DOMAINS` = *(empty — egress closed by default)*. Any outbound network access requires escalation per §5; if a future deployment opens egress, list the exact domains here.
+- `ESCALATION_CHANNEL` = a prompt in the active session (the human is reachable in-band; if the session is detached or unattended, queue the request and stop at the boundary).
+- `MEMORY_ROOT` = `/home/user/LinuxAgenticClaudeOS/.praxis/memory` — durable memory across sessions.
 
 If any of these is undefined at runtime, treat the most restrictive interpretation as true (no egress, no writes outside the current working directory) and surface the gap.
 
