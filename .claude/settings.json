@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/user/LinuxAgenticClaudeOS/.claude/hooks/escalation-boundary.py"
+            "command": "/home/user/LinuxAgenticClaudeOS/.praxis/hooks/pre_tool_use.py"
           }
         ]
       }

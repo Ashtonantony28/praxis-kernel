@@ -236,6 +236,26 @@ def test_bash_network() -> list[bool]:
             },
             code=0,
         ),
+        expect(
+            "network word inside double-quoted string is ignored",
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": 'git commit -m "fix: add curl gating"'
+                },
+            },
+            code=0,
+        ),
+        expect(
+            "network word inside single-quoted heredoc-style string is ignored",
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "git commit -m 'add wget block to hook'"
+                },
+            },
+            code=0,
+        ),
     ]
 
 
@@ -397,6 +417,16 @@ def test_bash_paths() -> list[bool]:
             },
             code=2,
             stderr_contains="control plane",
+        ),
+        expect(
+            "destructive command word inside quoted string is ignored",
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": 'echo "do not rm /etc/passwd here"'
+                },
+            },
+            code=0,
         ),
     ]
 

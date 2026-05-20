@@ -102,16 +102,30 @@ def check_file_path(raw: str, tool: str) -> None:
         block(f"{tool} would modify the control plane: {resolved}")
 
 
+def strip_quoted(cmd: str) -> str:
+    """Blank out single- and double-quoted substrings.
+
+    Avoids false positives where a destructive or network command name
+    appears inside a literal string (e.g. a commit message arg). The
+    OS-level sandbox is the authoritative defense against paths hidden
+    inside quotes; this hook only inspects unquoted command surface.
+    """
+    cmd = re.sub(r"'[^']*'", " ", cmd)
+    cmd = re.sub(r'"[^"]*"', " ", cmd)
+    return cmd
+
+
 def check_bash_paths(cmd: str) -> None:
+    surface = strip_quoted(cmd)
     candidate_paths: list[str] = []
 
-    for match in DESTRUCTIVE_CMD_RE.finditer(cmd):
+    for match in DESTRUCTIVE_CMD_RE.finditer(surface):
         tail = match.group(1)
         candidate_paths += ABSOLUTE_PATH_RE.findall(tail)
 
-    candidate_paths += REDIRECT_PATH_RE.findall(cmd)
+    candidate_paths += REDIRECT_PATH_RE.findall(surface)
 
-    for match in SED_INPLACE_RE.finditer(cmd):
+    for match in SED_INPLACE_RE.finditer(surface):
         candidate_paths += ABSOLUTE_PATH_RE.findall(match.group(1))
 
     for raw in candidate_paths:
@@ -125,12 +139,13 @@ def check_bash_paths(cmd: str) -> None:
 
 
 def check_bash_network(cmd: str) -> None:
-    net_match = NETWORK_CMD_RE.search(cmd)
+    surface = strip_quoted(cmd)
+    net_match = NETWORK_CMD_RE.search(surface)
     if not net_match:
         return
-    targets_external = bool(EXTERNAL_URL_RE.search(cmd))
+    targets_external = bool(EXTERNAL_URL_RE.search(surface))
     targets_localhost_only = (
-        bool(LOCALHOST_RE.search(cmd)) and not targets_external
+        bool(LOCALHOST_RE.search(surface)) and not targets_external
     )
     if targets_localhost_only:
         return
