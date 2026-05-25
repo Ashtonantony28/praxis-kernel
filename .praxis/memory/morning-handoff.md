@@ -1,9 +1,9 @@
-# Morning handoff — Phase B complete, ready for Phase C
+# Morning handoff — Phase C complete, ready for Phase D
 
 **Date:** 2026-05-25
-**Status:** Phase B **done**. Subscription OAuth is the primary auth path,
-API key is fallback. 52 tests green, §5 hook fixed for space-in-path.
-Phase C (LocalRuntime stub for open-source models) is next.
+**Status:** Phase C **done**. LocalRuntime implemented and tested (69 tests
+green). Runtime selection via `PRAXIS_RUNTIME=local` env var.
+Phase D (convergence.yaml multi-runtime config switch) is next.
 
 ---
 
@@ -16,22 +16,23 @@ Phase C (LocalRuntime stub for open-source models) is next.
 ```
 praxis-system-prompt.md              # the spec (§0–§11)
 CLAUDE.md                            # project conventions — read this first
-pyproject.toml                       # deps: anthropic, pytest
+pyproject.toml                       # deps: anthropic, openai[local], pytest
 
 praxis/                              # the orchestrator
   __init__.py                        #   package marker, version
-  __main__.py                        #   `python -m praxis` — uses from_env(), logs auth
+  __main__.py                        #   `python -m praxis` — PRAXIS_RUNTIME selection
   config.py                          #   Config.from_env() — workspace/memory/hook from env
   subagents.py                       #   parse .claude/agents/*.md → SubagentDef
   hooks.py                           #   run_pretool_hook() — §5 enforcement
   tools.py                           #   7 tool schemas + implementations
   orchestrator.py                    #   Orchestrator — delegates to Runtime, owns tools/hooks
-  runtime/                           #   Provider abstraction (Phase A)
-    __init__.py                      #     exports Runtime, ClaudeCodeRuntime
+  runtime/                           #   Provider abstraction (Phase A + C)
+    __init__.py                      #     exports Runtime, ClaudeCodeRuntime, LocalRuntime
     base.py                          #     Abstract Runtime (4 abstract methods)
     claude_code.py                   #     ClaudeCodeRuntime — from_env() with OAuth/API key
+    local.py                         #     LocalRuntime — OpenAI-compatible (Ollama, vLLM)
 
-tests/                               # 52 tests, all pass, all mocked
+tests/                               # 69 tests, all pass, all mocked
   conftest.py                        #   FakeClient, FakeResponse, workspace fixtures
   test_config.py                     #   6 tests — env resolution, restrictive fallback
   test_subagents.py                  #   8 tests — YAML parsing, model mapping
@@ -39,14 +40,16 @@ tests/                               # 52 tests, all pass, all mocked
   test_tools.py                      #   13 tests — Bash, Read, Edit, Write, Grep, Glob, schemas
   test_orchestrator.py               #   7 tests — uses ClaudeCodeRuntime(FakeClient) now
   test_runtime.py                    #   5 tests — OAuth/API key priority, env scrubbing
+  test_local_runtime.py              #   17 tests — LocalRuntime: from_env, run_loop, tools
 
 .claude/agents/                      # 5 subagent definitions (unchanged)
-.claude/hooks/escalation-boundary.py # §5 hook (fixed: space-in-path regex bugs)
+.claude/hooks/escalation-boundary.py # §5 hook (unchanged)
 .claude/settings.json                # hook wiring (unchanged)
 
 .praxis/memory/
   morning-handoff.md                 # this file
-  phase-b-plan.md                    # Phase B design plan
+  phase-c-plan.md                    # Phase C design plan
+  phase-b-plan.md                    # Phase B design plan (archived)
   runtime-abstraction-plan.md        # Phase A design plan (archived)
   phase0-plan.md                     # Phase 0 design plan (archived)
   .gitkeep
@@ -54,45 +57,53 @@ tests/                               # 52 tests, all pass, all mocked
 
 ---
 
-## 2. What Phase B built
+## 2. What Phase C built
 
-### Auth resolution (`ClaudeCodeRuntime.from_env()`)
+### LocalRuntime (`praxis/runtime/local.py`)
 
-1. **Priority:** `CLAUDE_CODE_OAUTH_TOKEN` first (subscription, flat cost),
-   `ANTHROPIC_API_KEY` second (pay-per-token), hard exit if neither.
-2. **Env scrubbing:** When OAuth is active, `ANTHROPIC_API_KEY` is popped from
-   `os.environ` so the SDK and subprocesses can't silently use it.
-3. **Startup logging:** `[praxis] auth: oauth` or `[praxis] auth: api_key`
-   logged to stderr on every session start.
-4. **Backwards compatible:** `ClaudeCodeRuntime(client)` still works for tests
-   and manual construction. `auth_method` defaults to `"api_key"`.
+Full `Runtime` implementation targeting any OpenAI-compatible endpoint:
 
-### Hook fix (escalation-boundary.py)
+1. **`run_loop`** — client-side agent loop via `chat.completions.create()`.
+   Converts tool schemas (Anthropic → OpenAI format), handles tool_calls
+   with JSON-string arguments, feeds results back as `role: "tool"` messages.
+2. **`spawn_subagent`** — delegates to `run_loop` (no native subagent support).
+3. **`execute_tool`** — parses OpenAI tool_call objects (or dicts), decodes
+   JSON arguments, invokes the Orchestrator's tool_executor callback.
+4. **`manage_context`** — appends messages in OpenAI format (handles both
+   plain strings and full message dicts with `role` key).
 
-Fixed two bugs in Bash command path extraction:
-- **Bug 1 (space truncation):** Paths with spaces (like the workspace root
-  "/mnt/c/Users/Aiden Antony/...") were truncated at the first space,
-  causing false blocks on legitimate operations.
-- **Bug 2 (relative path mid-slash):** `rm tests/file.py` captured
-  `/file.py` as the path, which resolved to root-level and got blocked.
+### Runtime selection (`__main__.py`)
 
-New approach: `_PATH_TOKEN_RE` handles double-quoted, single-quoted, and
-unquoted absolute paths. `_segment_after` + `_extract_paths` replace the
-old `.findall()` pattern. 4 new regression tests added.
+`PRAXIS_RUNTIME` env var: `"claude"` (default) or `"local"`.
+Logs runtime info to stderr on startup.
 
-### Cleanup
+### Configuration
 
-- Deleted `tests/verify_hook.py` (empty file from space-in-path bug).
+| Env var                 | Default                  | Purpose              |
+|------------------------|--------------------------|----------------------|
+| `PRAXIS_RUNTIME`       | `claude`                 | Runtime selection    |
+| `PRAXIS_LOCAL_BASE_URL`| `http://localhost:11434` | Server URL           |
+| `PRAXIS_LOCAL_MODEL`   | `llama3.1:8b`            | Default local model  |
+
+### Model resolution
+
+Claude model IDs (`claude-*`) are automatically replaced with
+`PRAXIS_LOCAL_MODEL`. Non-Claude model IDs pass through unchanged.
+
+### Dependency
+
+`openai>=1.0` added as optional dependency: `pip install praxis[local]`.
+Clean SystemExit if openai package is missing and local runtime is selected.
 
 ---
 
 ## 3. What stayed the same
 
-- `runtime/base.py` — Runtime interface unchanged
+- `runtime/base.py` — Runtime interface unchanged (4 abstract methods)
 - `orchestrator.py` — unchanged
 - `tools.py`, `hooks.py`, `config.py`, `subagents.py` — unchanged
-- §5 hook enforcement — verified: curl blocked, workspace write allowed
-- All 47 pre-existing test assertions — unchanged
+- §5 hook enforcement — verified: all 13 hook tests pass
+- All 52 pre-existing tests — unchanged and passing
 
 ---
 
@@ -100,33 +111,43 @@ old `.findall()` pattern. 4 new regression tests added.
 
 ```bash
 export PRAXIS_WORKSPACE_ROOT=$(pwd)
-python -m pytest tests/ -v          # 52 tests, all should pass
-python -c "from praxis.runtime import Runtime, ClaudeCodeRuntime"
+python -m pytest tests/ -v          # 69 tests, all should pass
+python -c "from praxis.runtime import Runtime, ClaudeCodeRuntime, LocalRuntime"
+
+# With Ollama running:
+export PRAXIS_RUNTIME=local
+python -m praxis "hello"            # should get a response from llama3.1:8b
 ```
 
 ---
 
-## 5. What Phase C should do
+## 5. What Phase D should do
 
-**Goal:** LocalRuntime stub for open-source models.
+**Goal:** Multi-runtime config switch via `convergence.yaml`.
 
-1. Create `praxis/runtime/local.py` with a `LocalRuntime(Runtime)` class
-2. Implement the 4 abstract methods to call a local model server
-   (e.g., ollama, vLLM, llama.cpp) via its HTTP API
-3. Start as a stub — raise `NotImplementedError` with clear messages,
-   then implement `run_loop` first
-4. Add a `--runtime local` flag or `PRAXIS_RUNTIME=local` env var to
-   `__main__.py` for runtime selection
+1. Define `convergence.yaml` schema — selects runtime per role:
+   ```yaml
+   runtimes:
+     default: claude
+     overrides:
+       scout: local
+       scribe: local
+   local:
+     base_url: http://localhost:11434
+     model: llama3.1:8b
+   ```
+2. Update `Orchestrator` to hold multiple runtimes, route by subagent role
+3. Add config parsing in `praxis/config.py` or new `praxis/convergence.py`
+4. Tests: routing logic, fallback behavior, invalid config handling
 5. Do not change §5 hook, tools, or the Runtime interface contract
-6. Test with FakeClient pattern (mock the HTTP calls)
 
 ---
 
 ## 6. Recommended next-session prompt
 
-> Begin Phase C: add LocalRuntime stub for open-source models. Read
-> `CLAUDE.md` and `.praxis/memory/morning-handoff.md` for current
-> state. The Runtime interface is stable — subclass it in
-> `praxis/runtime/local.py`. 52 tests green. Use the full pipeline:
-> Scout → Plan → Build → Verify → Scribe. Do not expand scope beyond
-> the LocalRuntime stub.
+> Begin Phase D: add convergence.yaml multi-runtime config switch. Read
+> `CLAUDE.md` and `.praxis/memory/morning-handoff.md` for current state.
+> Both runtimes work (Claude + Local). Goal: route subagent roles to
+> different runtimes based on a yaml config file. 69 tests green. Use
+> the full pipeline: Scout → Plan → Build → Verify → Scribe. Do not
+> expand scope beyond the routing config.
