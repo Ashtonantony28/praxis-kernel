@@ -2,52 +2,67 @@
 
 from __future__ import annotations
 
-import os
 import sys
 
 from .config import Config
+from .convergence import ConvergenceConfig
 from .orchestrator import Orchestrator
 from .runtime import ClaudeCodeRuntime, LocalRuntime
+from .runtime.base import Runtime
 
 
-def _create_runtime():
-    """Select runtime based on PRAXIS_RUNTIME env var.
+def _create_runtimes(conv: ConvergenceConfig):
+    """Create all runtimes needed by the convergence config.
 
-    Values: "claude" (default), "local" (OpenAI-compatible endpoint).
+    Returns (default_runtime, overrides_dict).
     """
-    choice = os.environ.get("PRAXIS_RUNTIME", "claude").lower()
+    runtimes: dict[str, Runtime] = {}
 
-    if choice == "local":
-        runtime = LocalRuntime.from_env()
+    if conv.needs_claude():
+        rt = ClaudeCodeRuntime.from_env()
+        sys.stderr.write(f"[praxis] runtime claude: auth={rt.auth_method}\n")
+        runtimes["claude"] = rt
+
+    if conv.needs_local():
+        rt = LocalRuntime.from_env()
         sys.stderr.write(
-            f"[praxis] runtime: local ({runtime.base_url}, "
-            f"model: {runtime.default_model})\n"
+            f"[praxis] runtime local: {rt.base_url}, "
+            f"model={rt.default_model}\n"
         )
-        return runtime
-    elif choice == "claude":
-        runtime = ClaudeCodeRuntime.from_env()
-        sys.stderr.write(f"[praxis] auth: {runtime.auth_method}\n")
-        return runtime
-    else:
-        raise SystemExit(
-            f"[praxis] fatal: unknown PRAXIS_RUNTIME={choice!r}.\n"
-            "Valid values: claude, local"
-        )
+        runtimes["local"] = rt
+
+    default = runtimes[conv.default_runtime]
+    overrides = {
+        name: runtimes[rt_name]
+        for name, rt_name in conv.overrides.items()
+        if rt_name != conv.default_runtime
+    }
+
+    return default, overrides
 
 
 def main() -> None:
-    config = Config.from_env()
-    runtime = _create_runtime()
+    try:
+        config = Config.from_env()
+        conv = ConvergenceConfig.load(config.workspace_root)
+        default_runtime, runtime_overrides = _create_runtimes(conv)
 
-    orch = Orchestrator(runtime, config)
+        orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides)
 
-    if len(sys.argv) > 1:
-        message = " ".join(sys.argv[1:])
-    else:
-        message = sys.stdin.read()
+        if len(sys.argv) > 1:
+            message = " ".join(sys.argv[1:])
+        else:
+            message = sys.stdin.read()
 
-    result = orch.run(message)
-    print(result)
+        result = orch.run(message)
+        print(result)
+    except KeyboardInterrupt:
+        sys.stderr.write("\n[praxis] interrupted.\n")
+        raise SystemExit(1)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        raise SystemExit(f"[praxis] fatal: {exc}")
 
 
 if __name__ == "__main__":

@@ -104,6 +104,10 @@ def _clean_env(monkeypatch):
 def mock_openai():
     mod = MagicMock()
     mod.OpenAI.return_value = MagicMock()
+    # Real exception classes so except clauses work
+    mod.APIConnectionError = type("APIConnectionError", (Exception,), {})
+    mod.AuthenticationError = type("AuthenticationError", (Exception,), {})
+    mod.APIStatusError = type("APIStatusError", (Exception,), {})
     with patch.dict(sys.modules, {"openai": mod}):
         yield mod
 
@@ -409,3 +413,78 @@ def test_resolve_model_local():
     runtime = LocalRuntime(FakeOpenAIClient([]))
     assert runtime._resolve_model("llama3.1:8b") == "llama3.1:8b"
     assert runtime._resolve_model("qwen2:7b") == "qwen2:7b"
+
+
+# ---------- error handling ----------
+
+
+def test_run_loop_connection_error(mock_openai):
+    """Connection errors produce a clean SystemExit."""
+    client = MagicMock()
+    client.chat.completions.create.side_effect = mock_openai.APIConnectionError()
+
+    runtime = LocalRuntime(client, base_url="http://localhost:11434")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runtime.run_loop(
+            model="llama3.1:8b",
+            system="sys",
+            user_message="hi",
+            tool_schemas=[],
+            tool_executor=_noop_executor,
+        )
+    assert "cannot connect" in str(exc_info.value)
+    assert "localhost:11434" in str(exc_info.value)
+
+
+def test_run_loop_auth_error(mock_openai):
+    """Auth errors from local server produce a clean SystemExit."""
+    client = MagicMock()
+    client.chat.completions.create.side_effect = mock_openai.AuthenticationError()
+
+    runtime = LocalRuntime(client)
+
+    with pytest.raises(SystemExit) as exc_info:
+        runtime.run_loop(
+            model="llama3.1:8b",
+            system="sys",
+            user_message="hi",
+            tool_schemas=[],
+            tool_executor=_noop_executor,
+        )
+    assert "rejected authentication" in str(exc_info.value)
+
+
+def test_run_loop_empty_choices():
+    """Empty choices array produces a clean SystemExit."""
+    response = FakeCompletion(choices=[])
+    client = FakeOpenAIClient([response])
+    runtime = LocalRuntime(client)
+
+    with pytest.raises(SystemExit) as exc_info:
+        runtime.run_loop(
+            model="llama3.1:8b",
+            system="sys",
+            user_message="hi",
+            tool_schemas=[],
+            tool_executor=_noop_executor,
+        )
+    assert "empty response" in str(exc_info.value)
+
+
+def test_execute_tool_malformed_json():
+    """Malformed JSON arguments produce an error result, not a crash."""
+    client = FakeOpenAIClient([])
+    runtime = LocalRuntime(client)
+
+    tool_calls = [
+        FakeToolCall(
+            id="call_bad",
+            function=FakeFunction(name="Bash", arguments="not valid json{{{"),
+        )
+    ]
+
+    results = runtime.execute_tool(tool_calls, _noop_executor)
+    assert len(results) == 1
+    assert results[0]["tool_call_id"] == "call_bad"
+    assert "malformed" in results[0]["content"]

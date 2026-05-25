@@ -18,9 +18,16 @@ class Orchestrator:
     Delegates the *how* (API protocol) to the Runtime.
     """
 
-    def __init__(self, runtime: Runtime, config: Config) -> None:
+    def __init__(
+        self,
+        runtime: Runtime,
+        config: Config,
+        *,
+        runtime_overrides: dict[str, Runtime] | None = None,
+    ) -> None:
         self.runtime = runtime
         self.config = config
+        self.runtime_overrides = runtime_overrides or {}
         self.system_prompt = self._load_system_prompt()
         self.subagents = load_subagents(config.workspace_root / ".claude" / "agents")
 
@@ -39,12 +46,17 @@ class Orchestrator:
         )
 
     def run_subagent(self, name: str, prompt: str) -> str:
-        """Spawn a subagent session by name."""
+        """Spawn a subagent session by name.
+
+        Uses runtime_overrides to route subagents to different runtimes
+        (e.g., scout → local, builder → claude). Falls back to default.
+        """
         if name not in self.subagents:
             available = ", ".join(sorted(self.subagents))
             return f"Error: unknown subagent '{name}'. Available: {available}"
         defn = self.subagents[name]
-        return self.runtime.spawn_subagent(
+        runtime = self.runtime_overrides.get(name, self.runtime)
+        return runtime.spawn_subagent(
             model=defn.model,
             system=defn.system_prompt,
             prompt=prompt,

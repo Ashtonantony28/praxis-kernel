@@ -23,6 +23,11 @@ def mock_anthropic():
     """Inject a fake anthropic module into sys.modules."""
     mod = MagicMock()
     mod.Anthropic.return_value = MagicMock()
+    # Real exception classes so except clauses work
+    mod.AuthenticationError = type("AuthenticationError", (Exception,), {})
+    mod.APIConnectionError = type("APIConnectionError", (Exception,), {})
+    mod.RateLimitError = type("RateLimitError", (Exception,), {})
+    mod.APIStatusError = type("APIStatusError", (Exception,), {})
     with patch.dict(sys.modules, {"anthropic": mod}):
         yield mod
 
@@ -65,3 +70,65 @@ def test_from_env_neither_exits(mock_anthropic):
     with pytest.raises(SystemExit) as exc_info:
         ClaudeCodeRuntime.from_env()
     assert "no auth configured" in str(exc_info.value)
+
+
+def test_from_env_no_anthropic():
+    """from_env exits cleanly when anthropic package is missing."""
+    with patch.dict(sys.modules, {"anthropic": None}):
+        with pytest.raises(SystemExit) as exc_info:
+            ClaudeCodeRuntime.from_env()
+        assert "anthropic" in str(exc_info.value)
+
+
+def test_run_loop_auth_error(monkeypatch, mock_anthropic):
+    """Authentication errors produce a clean SystemExit."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-bad")
+    runtime = ClaudeCodeRuntime.from_env()
+
+    runtime.client.messages.create.side_effect = mock_anthropic.AuthenticationError()
+
+    with pytest.raises(SystemExit) as exc_info:
+        runtime.run_loop(
+            model="claude-sonnet-4-6",
+            system="sys",
+            user_message="hi",
+            tool_schemas=[],
+            tool_executor=lambda n, a: "",
+        )
+    assert "authentication failed" in str(exc_info.value)
+
+
+def test_run_loop_connection_error(monkeypatch, mock_anthropic):
+    """Connection errors produce a clean SystemExit."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-123")
+    runtime = ClaudeCodeRuntime.from_env()
+
+    runtime.client.messages.create.side_effect = mock_anthropic.APIConnectionError()
+
+    with pytest.raises(SystemExit) as exc_info:
+        runtime.run_loop(
+            model="claude-sonnet-4-6",
+            system="sys",
+            user_message="hi",
+            tool_schemas=[],
+            tool_executor=lambda n, a: "",
+        )
+    assert "cannot reach Anthropic API" in str(exc_info.value)
+
+
+def test_run_loop_rate_limit_error(monkeypatch, mock_anthropic):
+    """Rate limit errors produce a clean SystemExit."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-123")
+    runtime = ClaudeCodeRuntime.from_env()
+
+    runtime.client.messages.create.side_effect = mock_anthropic.RateLimitError()
+
+    with pytest.raises(SystemExit) as exc_info:
+        runtime.run_loop(
+            model="claude-sonnet-4-6",
+            system="sys",
+            user_message="hi",
+            tool_schemas=[],
+            tool_executor=lambda n, a: "",
+        )
+    assert "rate limited" in str(exc_info.value)

@@ -8,22 +8,24 @@ Praxis is a minimal Python orchestrator for an agentic OS built on the Claude AP
 
 ```
 praxis-system-prompt.md          # The spec (§0–§11)
+convergence.yaml                 # Multi-runtime routing config (optional — Phase D)
 praxis/                          # Python orchestrator package
   orchestrator.py                # Orchestrator: tool dispatch + §5 hook (delegates API to Runtime)
   config.py                      # WORKSPACE_ROOT, MEMORY_ROOT from env vars
+  convergence.py                 # Parses convergence.yaml — multi-runtime routing (Phase D)
   subagents.py                   # Parses .claude/agents/*.md into SubagentDef
   hooks.py                       # Runs escalation-boundary.py as PreToolUse check
   tools.py                       # Tool schemas + implementations (Bash, Read, Edit, Write, Grep, Glob, Agent)
-  __main__.py                    # python -m praxis entrypoint (PRAXIS_RUNTIME selection)
-  runtime/                       # Provider abstraction layer (Phase A+C)
+  __main__.py                    # python -m praxis entrypoint (convergence config + runtime creation)
+  runtime/                       # Provider abstraction layer (Phase A+C+D)
     __init__.py                  #   exports Runtime, ClaudeCodeRuntime, LocalRuntime
     base.py                      #   Abstract Runtime interface (4 methods)
-    claude_code.py               #   ClaudeCodeRuntime — Anthropic Messages API implementation
-    local.py                     #   LocalRuntime — OpenAI-compatible endpoint (Ollama, vLLM)
+    claude_code.py               #   ClaudeCodeRuntime — Anthropic Messages API (hardened error handling)
+    local.py                     #   LocalRuntime — OpenAI-compatible endpoint (hardened error handling)
 .claude/agents/                  # Subagent definitions (builder, planner, scout, scribe, verifier)
 .claude/hooks/escalation-boundary.py  # §5 hook — blocks out-of-workspace writes, network egress
 .claude/settings.json            # Claude Code hook wiring
-tests/                           # pytest suite (69 tests, all mocked — no real API calls)
+tests/                           # pytest suite (94 tests, all mocked — no real API calls)
 .praxis/memory/                  # Durable memory across sessions
 ```
 
@@ -63,3 +65,5 @@ python -m pytest tests/ -v
 - **Auth priority.** `CLAUDE_CODE_OAUTH_TOKEN` first (subscription), `ANTHROPIC_API_KEY` second (pay-per-token). When OAuth is active, `ANTHROPIC_API_KEY` is scrubbed from the environment. Auth path is logged to stderr at startup. Use `ClaudeCodeRuntime.from_env()` to create the runtime.
 - **Runtime interface.** `Orchestrator` takes a `Runtime` (not a raw client). `ClaudeCodeRuntime` wraps the Anthropic SDK. `LocalRuntime` wraps any OpenAI-compatible endpoint. To add a new provider, subclass `Runtime` in `praxis/runtime/` and implement 4 methods: `run_loop`, `spawn_subagent`, `execute_tool`, `manage_context`.
 - **Runtime selection.** `PRAXIS_RUNTIME=claude` (default) or `PRAXIS_RUNTIME=local`. Local runtime uses `PRAXIS_LOCAL_BASE_URL` and `PRAXIS_LOCAL_MODEL` env vars. Claude model IDs are automatically replaced with the configured local model.
+- **Convergence config.** Optional `convergence.yaml` at workspace root enables per-subagent runtime routing (e.g., scout → local, builder → claude). Env var `PRAXIS_RUNTIME` overrides the file's default. If no file exists, behavior is identical to env-var-only mode. See `praxis/convergence.py`.
+- **Error handling.** All import errors, auth failures, connection errors, and API errors produce clean `[praxis] fatal:` messages — no raw tracebacks reach the user. Top-level handler in `__main__.py` catches anything a runtime misses.

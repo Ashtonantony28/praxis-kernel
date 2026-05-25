@@ -77,6 +77,8 @@ class LocalRuntime(Runtime):
             {"role": "user", "content": user_message},
         ]
 
+        import openai
+
         last_content = ""
         for _ in range(max_turns):
             kwargs: dict[str, Any] = {
@@ -86,7 +88,26 @@ class LocalRuntime(Runtime):
             if openai_tools:
                 kwargs["tools"] = openai_tools
 
-            response = self.client.chat.completions.create(**kwargs)
+            try:
+                response = self.client.chat.completions.create(**kwargs)
+            except openai.APIConnectionError:
+                raise SystemExit(
+                    f"[praxis] fatal: cannot connect to local model server at {self.base_url}.\n"
+                    "Is Ollama / vLLM / llama.cpp running?"
+                )
+            except openai.AuthenticationError:
+                raise SystemExit(
+                    "[praxis] fatal: local model server rejected authentication."
+                )
+            except openai.APIStatusError as exc:
+                raise SystemExit(
+                    f"[praxis] fatal: local model server error (HTTP {exc.status_code}) — {exc.message}"
+                )
+
+            if not response.choices:
+                raise SystemExit(
+                    "[praxis] fatal: local model server returned an empty response."
+                )
             choice = response.choices[0]
             msg = choice.message
 
@@ -157,7 +178,18 @@ class LocalRuntime(Runtime):
                 name = tc.function.name
                 args_raw = tc.function.arguments
 
-            args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            try:
+                args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            except json.JSONDecodeError:
+                output = f"Error: malformed tool arguments from model: {args_raw!r}"
+                results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": output,
+                    }
+                )
+                continue
 
             output = tool_executor(name, args)
             results.append(

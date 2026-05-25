@@ -157,6 +157,49 @@ def test_unknown_subagent(config: Config):
     assert "unknown subagent" in tool_result["content"]
 
 
+def test_subagent_routing_with_override(config: Config, workspace: Path):
+    """Subagent uses overridden runtime when configured."""
+    # Create two separate FakeClients to track which gets called
+    default_client = FakeClient([
+        FakeResponse(
+            content=[
+                FakeToolUseBlock(
+                    id="tool_1",
+                    name="Agent",
+                    input={"name": "scout", "prompt": "Find files"},
+                )
+            ],
+            stop_reason="tool_use",
+        ),
+        FakeResponse(
+            content=[FakeTextBlock("Done.")],
+            stop_reason="end_turn",
+        ),
+    ])
+    override_client = FakeClient([
+        FakeResponse(
+            content=[FakeTextBlock("Scout found files via override.")],
+            stop_reason="end_turn",
+        ),
+    ])
+
+    default_runtime = ClaudeCodeRuntime(default_client)
+    override_runtime = ClaudeCodeRuntime(override_client)
+
+    orch = Orchestrator(
+        default_runtime,
+        config,
+        runtime_overrides={"scout": override_runtime},
+    )
+    result = orch.run("Investigate")
+    assert result == "Done."
+
+    # Default client: 2 calls (initial + after tool result)
+    assert len(default_client.messages.calls) == 2
+    # Override client: 1 call (subagent)
+    assert len(override_client.messages.calls) == 1
+
+
 def test_unknown_tool(config: Config):
     responses = [
         FakeResponse(

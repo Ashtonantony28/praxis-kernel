@@ -31,7 +31,13 @@ class ClaudeCodeRuntime(Runtime):
         When OAuth is active, ANTHROPIC_API_KEY is scrubbed from the
         environment to prevent silent override by the SDK or subprocesses.
         """
-        import anthropic
+        try:
+            import anthropic
+        except ImportError:
+            raise SystemExit(
+                "[praxis] fatal: 'anthropic' package required for claude runtime.\n"
+                "Install it: pip install anthropic"
+            )
 
         oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
         api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -60,17 +66,38 @@ class ClaudeCodeRuntime(Runtime):
         tool_executor: ToolExecutor,
         max_turns: int = MAX_TURNS,
     ) -> str:
+        import anthropic
+
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_message}]
 
         response = None
         for _ in range(max_turns):
-            response = self.client.messages.create(
-                model=model,
-                system=system,
-                messages=messages,
-                tools=tool_schemas,
-                max_tokens=4096,
-            )
+            try:
+                response = self.client.messages.create(
+                    model=model,
+                    system=system,
+                    messages=messages,
+                    tools=tool_schemas,
+                    max_tokens=4096,
+                )
+            except anthropic.AuthenticationError:
+                raise SystemExit(
+                    "[praxis] fatal: authentication failed. "
+                    "Check your CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY."
+                )
+            except anthropic.APIConnectionError as exc:
+                raise SystemExit(
+                    f"[praxis] fatal: cannot reach Anthropic API — {exc}"
+                )
+            except anthropic.RateLimitError:
+                raise SystemExit(
+                    "[praxis] fatal: rate limited by Anthropic API. "
+                    "Wait a moment and retry."
+                )
+            except anthropic.APIStatusError as exc:
+                raise SystemExit(
+                    f"[praxis] fatal: Anthropic API error (HTTP {exc.status_code}) — {exc.message}"
+                )
 
             messages = self.manage_context(messages, "assistant", response.content)
 
