@@ -10,7 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from praxis.runtime.local import LocalRuntime, MAX_CONTEXT_MESSAGES
+from praxis.runtime.local import LocalRuntime
+from praxis.runtime.openai_base import MAX_CONTEXT_MESSAGES
 
 
 # ---------- Fake OpenAI objects ----------

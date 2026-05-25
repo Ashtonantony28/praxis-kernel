@@ -7,7 +7,7 @@ import sys
 from .config import Config
 from .convergence import ConvergenceConfig
 from .orchestrator import Orchestrator
-from .runtime import ClaudeCodeRuntime, LocalRuntime
+from .runtime import ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
 from .runtime.base import Runtime
 
 
@@ -30,6 +30,14 @@ def _create_runtimes(conv: ConvergenceConfig):
             f"model={rt.default_model}\n"
         )
         runtimes["local"] = rt
+
+    if conv.needs_cloud():
+        rt = OpenAICloudRuntime.from_env()
+        sys.stderr.write(
+            f"[praxis] runtime cloud: {rt.base_url}, "
+            f"model={rt.default_model}\n"
+        )
+        runtimes["cloud"] = rt
 
     default = runtimes[conv.default_runtime]
     overrides = {

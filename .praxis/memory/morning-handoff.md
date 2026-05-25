@@ -1,7 +1,7 @@
-# Morning handoff — Phase H complete
+# Morning handoff — Phase I complete
 
 **Date:** 2026-05-25
-**Status:** Phase H complete. Retry + context management implemented. Pipeline test partially completed — blocked by OAuth rate limits.
+**Status:** Phase I complete. Model-agnostic cloud runtime implemented. 144 tests pass.
 
 ---
 
@@ -13,25 +13,27 @@
 
 ```
 praxis-system-prompt.md              # the spec (§0–§11)
-CLAUDE.md                            # project conventions — updated Phase H
+CLAUDE.md                            # project conventions — updated Phase I
 pyproject.toml                       # deps: anthropic, pyyaml, openai[local], pytest
 
 praxis/                              # the orchestrator
   __init__.py                        #   package marker, version
   __main__.py                        #   `python -m praxis` — convergence config + runtime creation
   config.py                          #   Config.from_env() — workspace/memory/hook from env
-  convergence.py                     #   ConvergenceConfig.load() — multi-runtime routing (Phase D)
+  convergence.py                     #   ConvergenceConfig.load() — multi-runtime routing (Phase D+I)
   subagents.py                       #   parse .claude/agents/*.md → SubagentDef
   hooks.py                           #   run_pretool_hook() — §5 enforcement
   tools.py                           #   7 tool schemas + implementations + secret filtering (Phase E)
   orchestrator.py                    #   Orchestrator — PRAXIS_MODEL support (Phase G)
-  runtime/                           #   Provider abstraction (Phase A + C + D + H)
-    __init__.py                      #     exports Runtime, ClaudeCodeRuntime, LocalRuntime
+  runtime/                           #   Provider abstraction (Phase A + C + D + H + I)
+    __init__.py                      #     exports Runtime, ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
     base.py                          #     Abstract Runtime (4 abstract methods)
+    openai_base.py                   #     OpenAIBaseRuntime — shared OpenAI-compatible logic (NEW)
     claude_code.py                   #     _create_with_retry() + sliding window (Phase H)
-    local.py                         #     sliding window context management (Phase H)
+    local.py                         #     Ollama/vLLM/llama.cpp — inherits OpenAIBaseRuntime (REFACTORED)
+    cloud.py                         #     OpenAICloudRuntime — cloud OpenAI-compat APIs (NEW)
 
-tests/                               # 126 tests, all pass, all mocked
+tests/                               # 144 tests, all pass, all mocked
   conftest.py                        #   FakeClient, FakeResponse, workspace fixtures
   test_config.py                     #   6 tests
   test_convergence.py                #   16 tests
@@ -41,6 +43,7 @@ tests/                               # 126 tests, all pass, all mocked
   test_orchestrator.py               #   8 tests
   test_runtime.py                    #   14 tests — retry + context management (Phase H)
   test_local_runtime.py              #   25 tests — context management (Phase H)
+  test_cloud_runtime.py              #   18 tests — cloud runtime + convergence routing (Phase I)
   test_main.py                       #   11 tests
 
 .claude/agents/                      # 5 subagent definitions (builder, planner, scout, scribe, verifier)
@@ -49,42 +52,57 @@ tests/                               # 126 tests, all pass, all mocked
 
 .praxis/memory/
   morning-handoff.md                 # this file
-  h3-pipeline-report.md             # Phase H pipeline test results (NEW)
+  model-agnostic-plan.md             # Phase I design plan (NEW)
+  h3-pipeline-report.md             # Phase H pipeline test results
   first-live-run.md                  # Phase G milestone
   phase-g-plan.md                    # Phase G design plan
 ```
 
 ---
 
-## 2. What Phase H built
+## 2. What Phase I built
 
-### H-1: Retry on rate limit
-- `_create_with_retry()` on `ClaudeCodeRuntime`
-- Exponential backoff: 5s → 10s → 20s (3 retries, capped at 60s)
-- Logs each retry to stderr
-- Clean `SystemExit` after exhaustion
-- Tests: retry-then-exit verifies 4 attempts + correct delays; retry-then-succeed verifies recovery
+### I-1: OpenAIBaseRuntime (shared base class)
+- Extracted all shared OpenAI-compatible logic from LocalRuntime into `openai_base.py`
+- Implements: `run_loop`, `spawn_subagent`, `execute_tool`, `manage_context`
+- Also: `_compact_context`, `_summarize_message`, `_convert_tools`
+- Subclasses override only 3 hooks: `from_env()`, `_call_api()`, `_resolve_model()`
 
-### H-2: Context window management
-- `manage_context()` now compacts when messages exceed 40
-- Keeps first message + last 10 verbatim
-- Older exchanges summarized into compact header (tool names, truncated results)
-- Split aligned to assistant message boundary for valid API alternation
-- Implemented in both `ClaudeCodeRuntime` and `LocalRuntime`
-- Tests: 5 for Claude runtime, 4 for Local runtime
+### I-2: OpenAICloudRuntime
+- New provider in `cloud.py` — works against any cloud OpenAI-compatible API
+- Requires `PRAXIS_CLOUD_API_KEY` (exits with clear error if missing)
+- Configurable via `PRAXIS_CLOUD_BASE_URL` and `PRAXIS_CLOUD_MODEL`
+- Exponential backoff retry on 429 (same pattern as ClaudeCodeRuntime)
+- Tested endpoints: OpenAI, OpenRouter, Groq, Gemini compatibility layer
 
-### H-3: Five-subagent pipeline test
-- **Scout stage: PASSED** — full path confirmed (orchestrator → Agent → Scout → Read → result)
-- **Stages 2–5: BLOCKED** — OAuth rate limit exhausted after Scout
-- Root cause: OAuth session token (~1 RPM effective when shared with Claude Code)
-- Multi-subagent calls need 2+ API requests in rapid succession, exceeding budget
-- Full details in `.praxis/memory/h3-pipeline-report.md`
+### I-3: LocalRuntime refactored
+- Now inherits from `OpenAIBaseRuntime` instead of `Runtime` directly
+- Only overrides: `__init__` (defaults), `from_env`, `_resolve_model`, `_call_api`
+- All existing behavior preserved — 25 tests pass unchanged
+
+### I-4: Convergence routing updated
+- `VALID_RUNTIMES` now includes `"cloud"` alongside `"claude"` and `"local"`
+- `ConvergenceConfig` has `cloud_base_url`, `cloud_model` fields
+- `needs_cloud()` method added
+- `__main__.py` creates `OpenAICloudRuntime` when convergence config requires it
+- Per-subagent routing: e.g., `scout: cloud` in convergence.yaml
+
+### Provider matrix
+
+| Runtime | Class | API Protocol | Auth | Retry |
+|---------|-------|-------------|------|-------|
+| claude | ClaudeCodeRuntime | Anthropic Messages | OAuth/API key | 429 backoff |
+| local | LocalRuntime | OpenAI chat completions | dummy "ollama" | none |
+| cloud | OpenAICloudRuntime | OpenAI chat completions | real API key | 429 backoff |
 
 ---
 
 ## 3. What stayed the same
 
-All 126 tests pass. No regressions from pre-H code.
+- ClaudeCodeRuntime untouched — still primary tested runtime
+- All 126 pre-existing tests pass unmodified (one import path adjusted)
+- §5 hook enforcement unchanged
+- Token propagation and secret filtering unchanged
 
 ---
 
@@ -93,33 +111,38 @@ All 126 tests pass. No regressions from pre-H code.
 ```bash
 export PRAXIS_WORKSPACE_ROOT=$(pwd)
 
-# Full test suite:
+# Full test suite (144 tests):
 python -m pytest tests/ -v
 
-# Verify retry logic (mocked, no API key needed):
-python -m pytest tests/test_runtime.py::test_run_loop_rate_limit_retries_then_exits -v
-python -m pytest tests/test_runtime.py::test_run_loop_rate_limit_retry_then_succeed -v
+# Cloud runtime tests only:
+python -m pytest tests/test_cloud_runtime.py -v
 
-# Verify context management:
-python -m pytest tests/test_runtime.py -k "compact" -v
-python -m pytest tests/test_local_runtime.py -k "compact" -v
+# Verify refactored LocalRuntime still works:
+python -m pytest tests/test_local_runtime.py -v
 
-# Live single-subagent test (needs auth):
-export PRAXIS_MODEL=claude-haiku-4-5-20251001
-python -m praxis "Use the Agent tool to spawn 'scout' with: list files in praxis/"
+# Live test with cloud provider (needs API key):
+export PRAXIS_RUNTIME=cloud
+export PRAXIS_CLOUD_API_KEY=sk-...
+export PRAXIS_CLOUD_BASE_URL=https://api.openai.com/v1
+export PRAXIS_CLOUD_MODEL=gpt-4o
+python -m praxis "Hello, what model are you?"
+
+# Live test with OpenRouter:
+export PRAXIS_CLOUD_BASE_URL=https://openrouter.ai/api/v1
+export PRAXIS_CLOUD_MODEL=anthropic/claude-3.5-sonnet
+python -m praxis "Hello"
 ```
 
 ---
 
-## 5. Unattended operation readiness
+## 5. Next session: unattended operation
 
-**NOT READY for overnight unattended runs.** Three gaps:
+**Recommended next phase:** Resolve the 3 gaps from Phase H that block unattended runs.
 
 ### Gap 1: Rate limit budget (critical, blocking)
 OAuth session tokens cannot support 5-agent pipelines (~10-15 API calls).
-Budget is ~1 request per rate-limit window when shared with Claude Code.
 - **Fix:** Dedicated `ANTHROPIC_API_KEY` with production rate limits, or
-  add configurable inter-subagent delay (30-60s between stages)
+  use cloud runtime (OpenRouter/Groq) for high-throughput subagents via convergence routing
 
 ### Gap 2: Retry budget too short for sustained limits
 35s total (5+10+20) insufficient when limits persist for minutes.
@@ -127,14 +150,14 @@ Budget is ~1 request per rate-limit window when shared with Claude Code.
   respect Retry-After headers from the API
 
 ### Gap 3: Context management unproven under real load
-Passes 9 unit tests but has never triggered during a live multi-agent run.
+Passes 9+ unit tests but has never triggered during a live multi-agent run.
 - **Fix:** Run a sustained test session once rate limit gap is resolved
 
-### Recommendation
-The pipeline architecture is sound — Scout stage proved the full path.
-The bottleneck is external (API rate limits), not internal. With a
-dedicated API key and extended retry budget, the next session should
-be able to complete the full 5-agent pipeline.
+### New opportunity from Phase I
+Cloud runtime enables a cost-optimization strategy: route cheap subagents
+(scout, verifier) to fast/cheap cloud endpoints (Groq, GPT-4o-mini) while
+keeping builder/planner on Claude. This could solve Gap 1 by reducing
+Claude API pressure.
 
 ---
 
@@ -156,6 +179,10 @@ be able to complete the full 5-agent pipeline.
 | F-3 | §5 hook `/dev/null` device path fix | 116 |
 | F-4 | Self-orchestration readiness assessment | 116 |
 | G | Fix OAuth auth_token= bug. First live run confirmed. | 116 |
-| **H-1** | **Retry on rate limit (exponential backoff)** | **117** |
-| **H-2** | **Context window management (sliding window)** | **126** |
-| **H-3** | **Pipeline test: Scout passed, 2-5 rate-limited** | **126** |
+| H-1 | Retry on rate limit (exponential backoff) | 117 |
+| H-2 | Context window management (sliding window) | 126 |
+| H-3 | Pipeline test: Scout passed, 2-5 rate-limited | 126 |
+| **I-1** | **OpenAIBaseRuntime — shared OpenAI-compatible base** | **126** |
+| **I-2** | **OpenAICloudRuntime — cloud provider** | **144** |
+| **I-3** | **LocalRuntime refactored to inherit base** | **144** |
+| **I-4** | **Convergence routing for cloud runtime** | **144** |

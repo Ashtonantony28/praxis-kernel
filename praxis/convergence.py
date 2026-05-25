@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-VALID_RUNTIMES = {"claude", "local"}
+VALID_RUNTIMES = {"claude", "local", "cloud"}
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,8 @@ class ConvergenceConfig:
     overrides: dict[str, str] = field(default_factory=dict)
     local_base_url: str = "http://localhost:11434"
     local_model: str = "llama3.1:8b"
+    cloud_base_url: str = "https://api.openai.com/v1"
+    cloud_model: str = "gpt-4o"
 
     @classmethod
     def load(cls, workspace_root: Path) -> "ConvergenceConfig":
@@ -37,6 +39,7 @@ class ConvergenceConfig:
 
         runtimes_section = data.get("runtimes", {})
         local_section = data.get("local", {})
+        cloud_section = data.get("cloud", {})
 
         # Default runtime: env var > file > "claude"
         env_runtime = os.environ.get("PRAXIS_RUNTIME")
@@ -72,11 +75,23 @@ class ConvergenceConfig:
             local_section.get("model", "llama3.1:8b"),
         )
 
+        # Cloud runtime settings: env var > file > defaults
+        cloud_base_url = os.environ.get(
+            "PRAXIS_CLOUD_BASE_URL",
+            cloud_section.get("base_url", "https://api.openai.com/v1"),
+        )
+        cloud_model = os.environ.get(
+            "PRAXIS_CLOUD_MODEL",
+            cloud_section.get("model", "gpt-4o"),
+        )
+
         return cls(
             default_runtime=default_runtime,
             overrides=overrides,
             local_base_url=local_base_url,
             local_model=local_model,
+            cloud_base_url=cloud_base_url,
+            cloud_model=cloud_model,
         )
 
     def needs_local(self) -> bool:
@@ -86,6 +101,10 @@ class ConvergenceConfig:
     def needs_claude(self) -> bool:
         """Whether any route requires the claude runtime."""
         return self.default_runtime == "claude" or "claude" in self.overrides.values()
+
+    def needs_cloud(self) -> bool:
+        """Whether any route requires the cloud runtime."""
+        return self.default_runtime == "cloud" or "cloud" in self.overrides.values()
 
     def runtime_for(self, subagent_name: str) -> str:
         """Return the runtime name for a given subagent."""
