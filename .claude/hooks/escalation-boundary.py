@@ -62,6 +62,12 @@ _DESTRUCTIVE_CMD_RE = re.compile(
 )
 _SED_INPLACE_CMD_RE = re.compile(r"\bsed\b[^|;&]*?-i")
 
+# Device paths that are safe to write to (e.g., redirecting stderr to /dev/null)
+_SAFE_DEVICE_PATHS = frozenset(
+    Path(p).resolve()
+    for p in ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/stdin")
+)
+
 
 def block(reason: str) -> "None":
     sys.stderr.write(
@@ -147,6 +153,8 @@ def check_bash(cmd: str) -> None:
 
     for raw in candidate_paths:
         resolved = resolve(raw)
+        if resolved in _SAFE_DEVICE_PATHS:
+            continue
         if not is_under(resolved, WORKSPACE_ROOT):
             block(f"Bash command would write outside WORKSPACE_ROOT: {raw}")
         if is_under(resolved, CONTROL_PLANE):

@@ -138,3 +138,38 @@ def test_hook_blocks_bash_redirect_outside(config: Config):
     )
     assert not result.allowed
     assert "outside WORKSPACE_ROOT" in (result.reason or "")
+
+
+# -- /dev/null device path tests (F-3) ----------------------------------------
+
+
+def test_hook_allows_bash_redirect_dev_null(config: Config):
+    """Redirect to /dev/null must not be blocked — it's a safe device path."""
+    result = run_pretool_hook(
+        config, "Bash", {"command": "noisy_command 2>/dev/null"}
+    )
+    assert result.allowed
+
+
+def test_hook_allows_bash_redirect_dev_stderr(config: Config):
+    """Redirect to /dev/stderr must not be blocked."""
+    result = run_pretool_hook(
+        config, "Bash", {"command": "echo error >/dev/stderr"}
+    )
+    assert result.allowed
+
+
+def test_hook_allows_bash_redirect_dev_stdout(config: Config):
+    """Redirect to /dev/stdout must not be blocked."""
+    result = run_pretool_hook(
+        config, "Bash", {"command": "cat file >/dev/stdout"}
+    )
+    assert result.allowed
+
+
+def test_hook_allows_bash_tee_dev_null(config: Config):
+    """tee /dev/null (destructive cmd pattern) must not be blocked."""
+    result = run_pretool_hook(
+        config, "Bash", {"command": "echo test | tee /dev/null"}
+    )
+    assert result.allowed
