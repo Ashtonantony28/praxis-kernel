@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import os
+import sys
+import time
 from typing import Any
 
 from .base import Runtime, ToolExecutor
 
 MAX_TURNS = 50
+RATE_LIMIT_MAX_RETRIES = 3
+RATE_LIMIT_BASE_DELAY = 5   # seconds
+RATE_LIMIT_MAX_DELAY = 60   # seconds
+MAX_CONTEXT_MESSAGES = 40   # trigger compaction above this
+CONTEXT_KEEP_RECENT = 10    # keep last N messages verbatim
 
 
 class ClaudeCodeRuntime(Runtime):
@@ -73,7 +80,7 @@ class ClaudeCodeRuntime(Runtime):
         response = None
         for _ in range(max_turns):
             try:
-                response = self.client.messages.create(
+                response = self._create_with_retry(
                     model=model,
                     system=system,
                     messages=messages,
@@ -88,11 +95,6 @@ class ClaudeCodeRuntime(Runtime):
             except anthropic.APIConnectionError as exc:
                 raise SystemExit(
                     f"[praxis] fatal: cannot reach Anthropic API — {exc}"
-                )
-            except anthropic.RateLimitError:
-                raise SystemExit(
-                    "[praxis] fatal: rate limited by Anthropic API. "
-                    "Wait a moment and retry."
                 )
             except anthropic.APIStatusError as exc:
                 raise SystemExit(
@@ -157,7 +159,99 @@ class ClaudeCodeRuntime(Runtime):
         content: Any,
     ) -> list[dict[str, Any]]:
         messages.append({"role": role, "content": content})
+        if len(messages) > MAX_CONTEXT_MESSAGES:
+            messages = self._compact_context(messages)
         return messages
+
+    def _compact_context(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Sliding window — summarize older exchanges, keep recent ones.
+
+        Keeps messages[0] (initial user prompt) and the last
+        CONTEXT_KEEP_RECENT messages. Everything in between is
+        compressed into a summary appended to the first message.
+        Split point is aligned to an assistant message boundary
+        so the alternating user/assistant pattern stays valid.
+        """
+        split = len(messages) - CONTEXT_KEEP_RECENT
+        # Align to assistant boundary for valid alternation
+        while split < len(messages) and messages[split].get("role") != "assistant":
+            split += 1
+        if split >= len(messages) - 2:
+            return messages  # not enough to compact
+
+        older = messages[1:split]
+        recent = messages[split:]
+
+        summary_lines = ["[Compacted context — older exchanges summarized]"]
+        for msg in older:
+            line = self._summarize_message(msg)
+            if line:
+                summary_lines.append(line)
+        summary_text = "\n".join(summary_lines)
+
+        first = dict(messages[0])
+        original = first["content"]
+        if isinstance(original, str):
+            first["content"] = f"{original}\n\n{summary_text}"
+        return [first] + recent
+
+    @staticmethod
+    def _summarize_message(msg: dict[str, Any]) -> str | None:
+        """One-line summary of a single message for context compaction."""
+        role = msg.get("role", "?")
+        content = msg.get("content", "")
+
+        if role == "assistant" and isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                btype = getattr(block, "type", None)
+                if btype == "tool_use":
+                    parts.append(f"called {block.name}")
+                elif btype == "text":
+                    parts.append(block.text[:80])
+            return "  Assistant: " + "; ".join(parts) if parts else None
+
+        if role == "user" and isinstance(content, list):
+            results: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "tool_result":
+                    results.append(str(item.get("content", ""))[:60])
+            return "  Results: " + "; ".join(results) if results else None
+
+        if isinstance(content, str):
+            return f"  {role.capitalize()}: {content[:100]}"
+        return None
+
+    def _create_with_retry(self, **kwargs: Any) -> Any:
+        """Call messages.create with exponential backoff on rate limits.
+
+        Retries up to RATE_LIMIT_MAX_RETRIES times on 429, with delays
+        of 5s, 10s, 20s (doubling, capped at 60s). Logs each retry to
+        stderr. Re-raises RateLimitError as SystemExit after exhaustion.
+        """
+        import anthropic
+
+        for attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                return self.client.messages.create(**kwargs)
+            except anthropic.RateLimitError:
+                if attempt >= RATE_LIMIT_MAX_RETRIES:
+                    raise SystemExit(
+                        "[praxis] fatal: rate limited by Anthropic API after "
+                        f"{RATE_LIMIT_MAX_RETRIES} retries. Try again later."
+                    )
+                delay = min(
+                    RATE_LIMIT_BASE_DELAY * (2 ** attempt),
+                    RATE_LIMIT_MAX_DELAY,
+                )
+                print(
+                    f"[praxis] rate limited — retrying in {delay}s "
+                    f"(attempt {attempt + 1}/{RATE_LIMIT_MAX_RETRIES})",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
 
     @staticmethod
     def _extract_text(response: Any) -> str:

@@ -25,7 +25,7 @@ praxis/                          # Python orchestrator package
 .claude/agents/                  # Subagent definitions (builder, planner, scout, scribe, verifier)
 .claude/hooks/escalation-boundary.py  # §5 hook — blocks out-of-workspace writes, network egress
 .claude/settings.json            # Claude Code hook wiring
-tests/                           # pytest suite (94 tests, all mocked — no real API calls)
+tests/                           # pytest suite (126 tests, all mocked — no real API calls)
 .praxis/memory/                  # Durable memory across sessions
 ```
 
@@ -66,5 +66,7 @@ python -m pytest tests/ -v
 - **Runtime interface.** `Orchestrator` takes a `Runtime` (not a raw client). `ClaudeCodeRuntime` wraps the Anthropic SDK. `LocalRuntime` wraps any OpenAI-compatible endpoint. To add a new provider, subclass `Runtime` in `praxis/runtime/` and implement 4 methods: `run_loop`, `spawn_subagent`, `execute_tool`, `manage_context`.
 - **Runtime selection.** `PRAXIS_RUNTIME=claude` (default) or `PRAXIS_RUNTIME=local`. Local runtime uses `PRAXIS_LOCAL_BASE_URL` and `PRAXIS_LOCAL_MODEL` env vars. Claude model IDs are automatically replaced with the configured local model.
 - **Convergence config.** Optional `convergence.yaml` at workspace root enables per-subagent runtime routing (e.g., scout → local, builder → claude). Env var `PRAXIS_RUNTIME` overrides the file's default. If no file exists, behavior is identical to env-var-only mode. See `praxis/convergence.py`.
+- **Rate limit retry.** `ClaudeCodeRuntime._create_with_retry()` wraps `messages.create()` with exponential backoff on 429: 5s → 10s → 20s (3 retries, capped at 60s). Clean `SystemExit` after exhaustion. Each retry logged to stderr.
+- **Context window management.** `manage_context()` compacts messages when they exceed 40: keeps first message + last 10 verbatim, summarizes older exchanges into a compact header. Prevents token limit crashes on long runs. Both runtimes implement this.
 - **Error handling.** All import errors, auth failures, connection errors, and API errors produce clean `[praxis] fatal:` messages — no raw tracebacks reach the user. Top-level handler in `__main__.py` catches anything a runtime misses.
 - **Token propagation.** All subprocesses (Bash tool, Grep tool, hooks) receive an explicit `env=` dict that includes auth tokens. Never rely on implicit inheritance. Subprocess output is filtered through `_redact_secrets()` before returning to the model — tokens never leak into tool results (§5.8).

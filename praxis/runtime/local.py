@@ -13,6 +13,8 @@ from typing import Any
 from .base import Runtime, ToolExecutor
 
 MAX_TURNS = 50
+MAX_CONTEXT_MESSAGES = 40   # trigger compaction above this
+CONTEXT_KEEP_RECENT = 10    # keep last N messages verbatim
 
 
 class LocalRuntime(Runtime):
@@ -212,7 +214,68 @@ class LocalRuntime(Runtime):
             messages.append(content)
         else:
             messages.append({"role": role, "content": content})
+        if len(messages) > MAX_CONTEXT_MESSAGES:
+            messages = self._compact_context(messages)
         return messages
+
+    def _compact_context(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Sliding window — summarize older exchanges, keep recent ones.
+
+        Keeps messages[0] (system) and messages[1] (user prompt) plus
+        last CONTEXT_KEEP_RECENT messages. Middle is compressed into a
+        summary appended to the user prompt. Split aligned to assistant
+        boundary for valid message ordering.
+        """
+        split = len(messages) - CONTEXT_KEEP_RECENT
+        while split < len(messages) and messages[split].get("role") != "assistant":
+            split += 1
+        if split >= len(messages) - 2:
+            return messages
+
+        older = messages[2:split]  # skip system + user prompt
+        recent = messages[split:]
+
+        summary_lines = ["[Compacted context — older exchanges summarized]"]
+        for msg in older:
+            line = self._summarize_message(msg)
+            if line:
+                summary_lines.append(line)
+        summary_text = "\n".join(summary_lines)
+
+        first_system = messages[0]
+        first_user = dict(messages[1])
+        original = first_user["content"]
+        if isinstance(original, str):
+            first_user["content"] = f"{original}\n\n{summary_text}"
+        return [first_system, first_user] + recent
+
+    @staticmethod
+    def _summarize_message(msg: dict[str, Any]) -> str | None:
+        """One-line summary of a single message for context compaction."""
+        role = msg.get("role", "?")
+        content = msg.get("content", "")
+
+        if role == "assistant":
+            parts: list[str] = []
+            if content:
+                parts.append(str(content)[:80])
+            for tc in msg.get("tool_calls", []):
+                name = (
+                    tc.get("function", {}).get("name", "?")
+                    if isinstance(tc, dict)
+                    else tc.function.name
+                )
+                parts.append(f"called {name}")
+            return "  Assistant: " + "; ".join(parts) if parts else None
+
+        if role == "tool":
+            return f"  Tool result: {str(content)[:60]}"
+
+        if isinstance(content, str):
+            return f"  {role.capitalize()}: {content[:100]}"
+        return None
 
     def _resolve_model(self, model: str) -> str:
         """Replace Claude model IDs with the configured local model."""

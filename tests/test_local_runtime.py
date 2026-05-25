@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from praxis.runtime.local import LocalRuntime
+from praxis.runtime.local import LocalRuntime, MAX_CONTEXT_MESSAGES
 
 
 # ---------- Fake OpenAI objects ----------
@@ -488,3 +488,67 @@ def test_execute_tool_malformed_json():
     assert len(results) == 1
     assert results[0]["tool_call_id"] == "call_bad"
     assert "malformed" in results[0]["content"]
+
+
+# ---------- context window management ----------
+
+
+def _build_long_local_conversation(runtime, n_exchanges):
+    """Build a messages list with system + user + n assistant/tool pairs."""
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "initial prompt"},
+    ]
+    for i in range(n_exchanges):
+        assistant_msg = {
+            "role": "assistant",
+            "content": f"step {i}",
+            "tool_calls": [
+                {
+                    "id": f"call_{i}",
+                    "type": "function",
+                    "function": {"name": f"Tool{i}", "arguments": "{}"},
+                }
+            ],
+        }
+        messages = runtime.manage_context(messages, "assistant", assistant_msg)
+        tool_result = {
+            "role": "tool",
+            "tool_call_id": f"call_{i}",
+            "content": f"result_{i}",
+        }
+        messages = runtime.manage_context(messages, "tool", tool_result)
+    return messages
+
+
+def test_local_manage_context_no_compaction():
+    """Messages below threshold are not compacted."""
+    runtime = LocalRuntime(FakeOpenAIClient([]))
+    messages = _build_long_local_conversation(runtime, 5)
+    # 2 initial + 5*2 = 12
+    assert len(messages) == 12
+
+
+def test_local_manage_context_compacts():
+    """Messages above threshold trigger compaction."""
+    runtime = LocalRuntime(FakeOpenAIClient([]))
+    messages = _build_long_local_conversation(runtime, 25)
+    assert len(messages) <= MAX_CONTEXT_MESSAGES
+
+
+def test_local_compact_preserves_system_and_user():
+    """System and user prompt messages survive compaction."""
+    runtime = LocalRuntime(FakeOpenAIClient([]))
+    messages = _build_long_local_conversation(runtime, 25)
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    assert "initial prompt" in messages[1]["content"]
+
+
+def test_local_compact_summary_mentions_tools():
+    """Compacted summary mentions tool names from older exchanges."""
+    runtime = LocalRuntime(FakeOpenAIClient([]))
+    messages = _build_long_local_conversation(runtime, 25)
+    summary = messages[1]["content"]
+    assert "Compacted context" in summary
+    assert "Tool0" in summary
