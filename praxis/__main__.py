@@ -49,21 +49,63 @@ def _create_runtimes(conv: ConvergenceConfig):
     return default, overrides
 
 
+def _parse_mode(argv: list[str]) -> str:
+    """Determine execution mode from argv flags."""
+    if "--daemon" in argv:
+        return "daemon"
+    if "--stop" in argv:
+        return "stop"
+    if "--status" in argv:
+        return "status"
+    if "--queue" in argv:
+        return "queue"
+    return "interactive"
+
+
 def main() -> None:
     try:
-        config = Config.from_env()
-        conv = ConvergenceConfig.load(config.workspace_root)
-        default_runtime, runtime_overrides = _create_runtimes(conv)
+        mode = _parse_mode(sys.argv)
 
-        orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides)
+        if mode == "interactive":
+            config = Config.from_env()
+            conv = ConvergenceConfig.load(config.workspace_root)
+            default_runtime, runtime_overrides = _create_runtimes(conv)
+            orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides)
 
-        if len(sys.argv) > 1:
-            message = " ".join(sys.argv[1:])
-        else:
-            message = sys.stdin.read()
+            # Filter out the program name, leave only the prompt args
+            args = [a for a in sys.argv[1:] if not a.startswith("--")]
+            if args:
+                message = " ".join(args)
+            else:
+                message = sys.stdin.read()
 
-        result = orch.run(message)
-        print(result)
+            result = orch.run(message)
+            print(result)
+
+        elif mode == "queue":
+            from .queue_runner import run_queue_loop
+
+            config = Config.from_env()
+            run_queue_loop(config.workspace_root)
+
+        elif mode == "daemon":
+            from .daemon import start_daemon
+
+            config = Config.from_env()
+            start_daemon(config.workspace_root)
+
+        elif mode == "stop":
+            from .daemon import stop_daemon
+
+            config = Config.from_env()
+            stop_daemon(config.workspace_root)
+
+        elif mode == "status":
+            from .daemon import report_status
+
+            config = Config.from_env()
+            report_status(config.workspace_root)
+
     except KeyboardInterrupt:
         sys.stderr.write("\n[praxis] interrupted.\n")
         raise SystemExit(1)

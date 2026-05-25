@@ -225,3 +225,104 @@ def test_main_prints_result(_mock_main_deps, capsys):
 
     captured = capsys.readouterr()
     assert "result text" in captured.out
+
+
+# ---------- _parse_mode ----------
+
+
+def test_parse_mode_interactive():
+    from praxis.__main__ import _parse_mode
+
+    assert _parse_mode(["praxis", "hello"]) == "interactive"
+    assert _parse_mode(["praxis"]) == "interactive"
+
+
+def test_parse_mode_queue():
+    from praxis.__main__ import _parse_mode
+
+    assert _parse_mode(["praxis", "--queue"]) == "queue"
+
+
+def test_parse_mode_daemon():
+    from praxis.__main__ import _parse_mode
+
+    assert _parse_mode(["praxis", "--daemon"]) == "daemon"
+
+
+def test_parse_mode_stop():
+    from praxis.__main__ import _parse_mode
+
+    assert _parse_mode(["praxis", "--stop"]) == "stop"
+
+
+def test_parse_mode_status():
+    from praxis.__main__ import _parse_mode
+
+    assert _parse_mode(["praxis", "--status"]) == "status"
+
+
+# ---------- main() queue/daemon modes ----------
+
+
+def test_main_queue_mode(tmp_path):
+    """--queue invokes run_queue_loop."""
+    from praxis.__main__ import main
+
+    config = MagicMock()
+    config.workspace_root = tmp_path
+
+    with (
+        patch("praxis.__main__.Config.from_env", return_value=config),
+        patch("praxis.queue_runner.run_queue_loop") as mock_loop,
+        patch.object(sys, "argv", ["praxis", "--queue"]),
+    ):
+        main()
+        mock_loop.assert_called_once_with(tmp_path)
+
+
+def test_main_daemon_mode(tmp_path):
+    """--daemon invokes start_daemon."""
+    from praxis.__main__ import main
+
+    config = MagicMock()
+    config.workspace_root = tmp_path
+
+    with (
+        patch("praxis.__main__.Config.from_env", return_value=config),
+        patch("praxis.daemon.start_daemon") as mock_start,
+        patch.object(sys, "argv", ["praxis", "--daemon"]),
+    ):
+        main()
+        mock_start.assert_called_once_with(tmp_path)
+
+
+def test_main_stop_mode(tmp_path):
+    """--stop invokes stop_daemon."""
+    from praxis.__main__ import main
+
+    config = MagicMock()
+    config.workspace_root = tmp_path
+
+    with (
+        patch("praxis.__main__.Config.from_env", return_value=config),
+        patch("praxis.daemon.stop_daemon") as mock_stop,
+        patch.object(sys, "argv", ["praxis", "--stop"]),
+    ):
+        main()
+        mock_stop.assert_called_once_with(tmp_path)
+
+
+def test_main_status_mode(tmp_path):
+    """--status invokes report_status."""
+    from praxis.__main__ import main
+
+    config = MagicMock()
+    config.workspace_root = tmp_path
+
+    with (
+        patch("praxis.__main__.Config.from_env", return_value=config),
+        patch("praxis.daemon.report_status") as mock_status,
+        patch.object(sys, "argv", ["praxis", "--status"]),
+    ):
+        main()
+        mock_status.assert_called_once_with(tmp_path)

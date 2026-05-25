@@ -16,7 +16,11 @@ praxis/                          # Python orchestrator package
   subagents.py                   # Parses .claude/agents/*.md into SubagentDef
   hooks.py                       # Runs escalation-boundary.py as PreToolUse check
   tools.py                       # Tool schemas + implementations (Bash, Read, Edit, Write, Grep, Glob, Agent)
-  __main__.py                    # python -m praxis entrypoint (convergence config + runtime creation)
+  queue.py                       # TaskQueue — CRUD on .praxis/queue/tasks.jsonl (Phase J)
+  checkpoint.py                  # CheckpointStore — multi-stage task resumption (Phase J)
+  queue_runner.py                # Queue processing loop — polls tasks, runs through orchestrator (Phase J)
+  daemon.py                      # Daemon start/stop/status for background operation (Phase J)
+  __main__.py                    # python -m praxis entrypoint — interactive, --queue, --daemon, --stop, --status
   runtime/                       # Provider abstraction layer (Phase A+C+D+I)
     __init__.py                  #   exports Runtime, ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
     base.py                      #   Abstract Runtime interface (4 methods)
@@ -27,8 +31,12 @@ praxis/                          # Python orchestrator package
 .claude/agents/                  # Subagent definitions (builder, planner, scout, scribe, verifier)
 .claude/hooks/escalation-boundary.py  # §5 hook — blocks out-of-workspace writes, network egress
 .claude/settings.json            # Claude Code hook wiring
-tests/                           # pytest suite (144 tests, all mocked — no real API calls)
+tests/                           # pytest suite (203 tests, all mocked — no real API calls)
 .praxis/memory/                  # Durable memory across sessions
+.praxis/queue/                   # Task queue directory (Phase J)
+  tasks.jsonl                    #   One JSON task object per line
+  results/                       #   Human-readable result files per task
+  checkpoints/                   #   Multi-stage task checkpoints
 ```
 
 ## Running
@@ -61,6 +69,17 @@ export PRAXIS_CLOUD_MODEL=gpt-4o                  # model (default)
 pip install praxis[local]                         # installs openai package
 python -m praxis "your message"
 
+# Unattended queue mode — process tasks from .praxis/queue/tasks.jsonl
+python -m praxis --queue
+
+# Daemon mode — run queue processor in background
+python -m praxis --daemon                         # start, writes PID to .praxis/praxis.pid
+python -m praxis --status                         # check if running + queue stats
+python -m praxis --stop                           # send SIGTERM, clean up PID file
+
+# Queue poll interval (default 2s)
+export PRAXIS_QUEUE_POLL_INTERVAL=5
+
 # Run tests
 python -m pytest tests/ -v
 ```
@@ -85,3 +104,7 @@ python -m pytest tests/ -v
 - **Context window management.** `manage_context()` compacts messages when they exceed 40: keeps first message + last 10 verbatim, summarizes older exchanges into a compact header. Prevents token limit crashes on long runs. All three runtimes implement this (OpenAI-compatible runtimes share the implementation via `OpenAIBaseRuntime`).
 - **Error handling.** All import errors, auth failures, connection errors, and API errors produce clean `[praxis] fatal:` messages — no raw tracebacks reach the user. Top-level handler in `__main__.py` catches anything a runtime misses.
 - **Token propagation.** All subprocesses (Bash tool, Grep tool, hooks) receive an explicit `env=` dict that includes auth tokens. Never rely on implicit inheritance. Subprocess output is filtered through `_redact_secrets()` before returning to the model — tokens never leak into tool results (§5.8).
+- **Task queue.** `.praxis/queue/tasks.jsonl` — one JSON task per line with `id`, `prompt`, `priority`, `status` (pending/running/done/failed), timestamps, `result`/`error`, and optional `stages` list. `TaskQueue` handles CRUD. On queue startup, any "running" tasks are marked "failed" (crash recovery). Priority: lowest number first, then oldest.
+- **Checkpoints.** Multi-stage tasks (those with `stages` list) get checkpointed to `.praxis/queue/checkpoints/{task-id}.json` after each stage completes. On restart, incomplete staged tasks resume from the last completed stage instead of restarting from scratch. Checkpoint is deleted after all stages complete.
+- **Queue runner.** `run_queue_loop()` polls `tasks.jsonl` every 2s (configurable via `PRAXIS_QUEUE_POLL_INTERVAL`). Handles SIGTERM gracefully — finishes current task stage, then exits. Atomic tasks run as a single `orch.run()` call; staged tasks run each stage as a separate `orch.run()` call with checkpoint between.
+- **Daemon.** `python -m praxis --daemon` forks to background via `os.fork()`, writes PID to `.praxis/praxis.pid`, logs to `.praxis/logs/praxis.log`. `--stop` sends SIGTERM. `--status` reports running state + queue stats. No log rotation (out of scope).
