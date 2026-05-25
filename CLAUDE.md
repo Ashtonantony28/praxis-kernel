@@ -22,7 +22,7 @@ praxis/                          # Python orchestrator package
 .claude/agents/                  # Subagent definitions (builder, planner, scout, scribe, verifier)
 .claude/hooks/escalation-boundary.py  # §5 hook — blocks out-of-workspace writes, network egress
 .claude/settings.json            # Claude Code hook wiring
-tests/                           # pytest suite (43 tests, all mocked — no real API calls)
+tests/                           # pytest suite (52 tests, all mocked — no real API calls)
 .praxis/memory/                  # Durable memory across sessions
 ```
 
@@ -33,7 +33,12 @@ tests/                           # pytest suite (43 tests, all mocked — no rea
 export PRAXIS_WORKSPACE_ROOT=/path/to/repo
 export PRAXIS_MEMORY_ROOT=$PRAXIS_WORKSPACE_ROOT/.praxis/memory
 
-# Run orchestrator (requires ANTHROPIC_API_KEY)
+# Auth: subscription OAuth (preferred) or API key (fallback)
+export CLAUDE_CODE_OAUTH_TOKEN=your-oauth-token   # subscription, flat cost
+# OR
+export ANTHROPIC_API_KEY=sk-ant-...               # pay-per-token fallback
+
+# Run orchestrator (logs active auth path to stderr)
 python -m praxis "your message"
 
 # Run tests
@@ -47,4 +52,5 @@ python -m pytest tests/ -v
 - **No real API calls in tests.** All tests use FakeClient from `tests/conftest.py`.
 - **Config from env vars.** `PRAXIS_WORKSPACE_ROOT` and `PRAXIS_MEMORY_ROOT` — restrictive fallback per §0 if unset.
 - **Model mapping:** `haiku` → `claude-haiku-4-5-20251001`, `sonnet` → `claude-sonnet-4-6`, `opus` → `claude-opus-4-6`.
+- **Auth priority.** `CLAUDE_CODE_OAUTH_TOKEN` first (subscription), `ANTHROPIC_API_KEY` second (pay-per-token). When OAuth is active, `ANTHROPIC_API_KEY` is scrubbed from the environment. Auth path is logged to stderr at startup. Use `ClaudeCodeRuntime.from_env()` to create the runtime.
 - **Runtime interface.** `Orchestrator` takes a `Runtime` (not a raw client). `ClaudeCodeRuntime` wraps the Anthropic SDK. To add a new provider, subclass `Runtime` in `praxis/runtime/` and implement 4 methods: `run_loop`, `spawn_subagent`, `execute_tool`, `manage_context`.

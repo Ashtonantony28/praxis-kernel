@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from praxis.config import Config
 from praxis.hooks import run_pretool_hook
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_hook_allows_workspace_write(config: Config, workspace: Path):
@@ -80,3 +83,58 @@ def test_hook_missing_file_allows(tmp_path: Path):
     )
     result = run_pretool_hook(cfg, "Write", {"file_path": "/tmp/x", "content": ""})
     assert result.allowed
+
+
+# -- Space-in-path and relative-path regression tests ------------------------
+
+
+def test_hook_allows_bash_rm_relative_path(config: Config):
+    """Bug fix: rm with relative path must not false-positive on mid-slash."""
+    result = run_pretool_hook(
+        config, "Bash", {"command": "rm tests/file.py"}
+    )
+    assert result.allowed
+
+
+def test_hook_blocks_bash_rm_outside_workspace(config: Config):
+    """rm with absolute path outside workspace is still blocked."""
+    result = run_pretool_hook(
+        config, "Bash", {"command": "rm /etc/important"}
+    )
+    assert not result.allowed
+    assert "outside WORKSPACE_ROOT" in (result.reason or "")
+
+
+def test_hook_allows_bash_rm_quoted_workspace_path(tmp_path: Path):
+    """Bug fix: rm with quoted path containing spaces is allowed inside workspace."""
+    ws = tmp_path / "My Workspace"
+    ws.mkdir()
+    hooks_dir = ws / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    shutil.copy2(
+        REPO_ROOT / ".claude" / "hooks" / "escalation-boundary.py",
+        hooks_dir / "escalation-boundary.py",
+    )
+    (ws / ".praxis" / "memory").mkdir(parents=True)
+
+    cfg = Config(
+        workspace_root=ws,
+        memory_root=ws / ".praxis" / "memory",
+        hook_path=hooks_dir / "escalation-boundary.py",
+        allowed_domains=frozenset(),
+    )
+
+    target = str(ws / "some file.txt")
+    result = run_pretool_hook(
+        cfg, "Bash", {"command": f'rm "{target}"'}
+    )
+    assert result.allowed
+
+
+def test_hook_blocks_bash_redirect_outside(config: Config):
+    """Redirect to absolute path outside workspace is blocked."""
+    result = run_pretool_hook(
+        config, "Bash", {"command": "echo hi > /tmp/evil.txt"}
+    )
+    assert not result.allowed
+    assert "outside WORKSPACE_ROOT" in (result.reason or "")

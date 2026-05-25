@@ -1,9 +1,9 @@
-# Morning handoff — Phase A complete, ready for Phase B
+# Morning handoff — Phase B complete, ready for Phase C
 
 **Date:** 2026-05-25
-**Status:** Phase A **done**. Runtime abstraction implemented as a pure
-refactor — 43 tests green, §5 hook verified. Phase B (subscription OAuth)
-is next.
+**Status:** Phase B **done**. Subscription OAuth is the primary auth path,
+API key is fallback. 52 tests green, §5 hook fixed for space-in-path.
+Phase C (LocalRuntime stub for open-source models) is next.
 
 ---
 
@@ -20,7 +20,7 @@ pyproject.toml                       # deps: anthropic, pytest
 
 praxis/                              # the orchestrator
   __init__.py                        #   package marker, version
-  __main__.py                        #   `python -m praxis` entrypoint
+  __main__.py                        #   `python -m praxis` — uses from_env(), logs auth
   config.py                          #   Config.from_env() — workspace/memory/hook from env
   subagents.py                       #   parse .claude/agents/*.md → SubagentDef
   hooks.py                           #   run_pretool_hook() — §5 enforcement
@@ -29,82 +29,70 @@ praxis/                              # the orchestrator
   runtime/                           #   Provider abstraction (Phase A)
     __init__.py                      #     exports Runtime, ClaudeCodeRuntime
     base.py                          #     Abstract Runtime (4 abstract methods)
-    claude_code.py                   #     ClaudeCodeRuntime — Anthropic Messages API
+    claude_code.py                   #     ClaudeCodeRuntime — from_env() with OAuth/API key
 
-tests/                               # 43 tests, all pass, all mocked
+tests/                               # 52 tests, all pass, all mocked
   conftest.py                        #   FakeClient, FakeResponse, workspace fixtures
   test_config.py                     #   6 tests — env resolution, restrictive fallback
   test_subagents.py                  #   8 tests — YAML parsing, model mapping
-  test_hooks.py                      #   9 tests — allow/block for writes, network, control plane
+  test_hooks.py                      #   13 tests — allow/block + space-in-path regression
   test_tools.py                      #   13 tests — Bash, Read, Edit, Write, Grep, Glob, schemas
   test_orchestrator.py               #   7 tests — uses ClaudeCodeRuntime(FakeClient) now
+  test_runtime.py                    #   5 tests — OAuth/API key priority, env scrubbing
 
-.claude/agents/                      # 5 subagent definitions (unchanged from Phase 0)
-.claude/hooks/escalation-boundary.py # §5 hook (unchanged)
+.claude/agents/                      # 5 subagent definitions (unchanged)
+.claude/hooks/escalation-boundary.py # §5 hook (fixed: space-in-path regex bugs)
 .claude/settings.json                # hook wiring (unchanged)
 
 .praxis/memory/
   morning-handoff.md                 # this file
-  runtime-abstraction-plan.md        # Phase A design plan (Scout inventory + interface mapping)
+  phase-b-plan.md                    # Phase B design plan
+  runtime-abstraction-plan.md        # Phase A design plan (archived)
   phase0-plan.md                     # Phase 0 design plan (archived)
   .gitkeep
 ```
 
 ---
 
-## 2. What Phase A built
+## 2. What Phase B built
 
-A pure refactor — zero new features, zero behavior changes. The
-Orchestrator no longer calls the Anthropic SDK directly; it delegates
-to a `Runtime` interface.
+### Auth resolution (`ClaudeCodeRuntime.from_env()`)
 
-1. **Runtime interface** (`runtime/base.py`): Abstract base class with
-   4 abstract methods and a `ToolExecutor` callback type:
-   - `run_loop(model, system, user_message, tool_schemas, tool_executor, max_turns)` → str
-   - `spawn_subagent(model, system, prompt, tool_schemas, tool_executor, max_turns)` → str
-   - `execute_tool(response_content, tool_executor)` → list[dict]
-   - `manage_context(messages, role, content)` → list[dict]
+1. **Priority:** `CLAUDE_CODE_OAUTH_TOKEN` first (subscription, flat cost),
+   `ANTHROPIC_API_KEY` second (pay-per-token), hard exit if neither.
+2. **Env scrubbing:** When OAuth is active, `ANTHROPIC_API_KEY` is popped from
+   `os.environ` so the SDK and subprocesses can't silently use it.
+3. **Startup logging:** `[praxis] auth: oauth` or `[praxis] auth: api_key`
+   logged to stderr on every session start.
+4. **Backwards compatible:** `ClaudeCodeRuntime(client)` still works for tests
+   and manual construction. `auth_method` defaults to `"api_key"`.
 
-2. **ClaudeCodeRuntime** (`runtime/claude_code.py`): Implements Runtime
-   using the Anthropic Messages API. Code moved verbatim from the old
-   `Orchestrator._run_loop`, `_process_tool_calls`, `_extract_text`.
+### Hook fix (escalation-boundary.py)
 
-3. **Orchestrator refactored** (`orchestrator.py`): Constructor takes
-   `Runtime` instead of a raw client. Calls `self.runtime.run_loop()`
-   and `self.runtime.spawn_subagent()`, passing `self._execute_with_hook`
-   as the `tool_executor` callback. Hook enforcement and subagent routing
-   stay in the Orchestrator.
+Fixed two bugs in Bash command path extraction:
+- **Bug 1 (space truncation):** Paths with spaces (like the workspace root
+  "/mnt/c/Users/Aiden Antony/...") were truncated at the first space,
+  causing false blocks on legitimate operations.
+- **Bug 2 (relative path mid-slash):** `rm tests/file.py` captured
+  `/file.py` as the path, which resolved to root-level and got blocked.
 
-4. **Entry point** (`__main__.py`): `ClaudeCodeRuntime(client)` →
-   `Orchestrator(runtime, config)`.
+New approach: `_PATH_TOKEN_RE` handles double-quoted, single-quoted, and
+unquoted absolute paths. `_segment_after` + `_extract_paths` replace the
+old `.findall()` pattern. 4 new regression tests added.
 
-5. **Tests** (`test_orchestrator.py`): One-line change per test —
-   `Orchestrator(ClaudeCodeRuntime(client), config)`. All 43 pass.
+### Cleanup
 
-### What stayed the same
-- `tools.py`, `hooks.py`, `config.py`, `subagents.py` — untouched
-- §5 hook enforcement — verified live: curl blocked, workspace write
-  allowed, outside-workspace write blocked
-- All 43 test assertions — identical before and after
+- Deleted `tests/verify_hook.py` (empty file from space-in-path bug).
 
 ---
 
-## 3. Cleanup items for next session
+## 3. What stayed the same
 
-Two minor items left from this session:
-
-1. **`tests/verify_hook.py`** — empty file, needs manual deletion.
-   Could not `rm` via Bash because the §5 hook truncates the workspace
-   path at the space in "Aiden Antony" and sees it as outside workspace.
-   Harmless but should be deleted: `rm tests/verify_hook.py`
-
-2. **Space-in-path bug in `escalation-boundary.py`** — the hook's Bash
-   command parser splits on whitespace, so any path containing spaces
-   (like this repo's workspace root) gets truncated. This causes false
-   blocks on legitimate in-workspace `rm`/file operations via Bash.
-   Not a Phase A regression (pre-existing), but worth fixing when
-   convenient. Does not affect the Python-level `run_pretool_hook()`
-   which passes paths as JSON.
+- `runtime/base.py` — Runtime interface unchanged
+- `orchestrator.py` — unchanged
+- `tools.py`, `hooks.py`, `config.py`, `subagents.py` — unchanged
+- §5 hook enforcement — verified: curl blocked, workspace write allowed
+- All 47 pre-existing test assertions — unchanged
 
 ---
 
@@ -112,38 +100,33 @@ Two minor items left from this session:
 
 ```bash
 export PRAXIS_WORKSPACE_ROOT=$(pwd)
-python -m pytest tests/ -v          # 43 tests, all should pass
+python -m pytest tests/ -v          # 52 tests, all should pass
 python -c "from praxis.runtime import Runtime, ClaudeCodeRuntime"
 ```
 
 ---
 
-## 5. Adding a new provider
+## 5. What Phase C should do
 
-Subclass `Runtime` in a new file under `praxis/runtime/`. Implement the
-4 abstract methods. The `tool_executor` callback handles §5 hook
-enforcement and Agent→subagent routing — providers don't need to know
-about hooks or subagents.
+**Goal:** LocalRuntime stub for open-source models.
 
----
-
-## 6. What Phase B should do
-
-**Goal:** Subscription OAuth as the primary authentication method.
-
-1. Add OAuth flow for user authentication (token acquisition + refresh)
-2. Integrate with the Runtime interface — the runtime receives auth
-   credentials, not hardcoded API keys
-3. Keep `ANTHROPIC_API_KEY` as a fallback for development
-4. Do not change §5 hook behavior
-5. Do not change tool implementations
+1. Create `praxis/runtime/local.py` with a `LocalRuntime(Runtime)` class
+2. Implement the 4 abstract methods to call a local model server
+   (e.g., ollama, vLLM, llama.cpp) via its HTTP API
+3. Start as a stub — raise `NotImplementedError` with clear messages,
+   then implement `run_loop` first
+4. Add a `--runtime local` flag or `PRAXIS_RUNTIME=local` env var to
+   `__main__.py` for runtime selection
+5. Do not change §5 hook, tools, or the Runtime interface contract
+6. Test with FakeClient pattern (mock the HTTP calls)
 
 ---
 
-## 7. Recommended next-session prompt
+## 6. Recommended next-session prompt
 
-> Begin Phase B: add subscription OAuth for user authentication. Read
+> Begin Phase C: add LocalRuntime stub for open-source models. Read
 > `CLAUDE.md` and `.praxis/memory/morning-handoff.md` for current
-> state. The Runtime interface is in place — authentication should flow
-> through it. 43 tests green. Use the full pipeline: Scout → Plan →
-> Build → Verify → Scribe. Do not expand scope beyond OAuth.
+> state. The Runtime interface is stable — subclass it in
+> `praxis/runtime/local.py`. 52 tests green. Use the full pipeline:
+> Scout → Plan → Build → Verify → Scribe. Do not expand scope beyond
+> the LocalRuntime stub.

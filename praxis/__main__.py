@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import sys
 
-import anthropic
-
 from .config import Config
 from .orchestrator import Orchestrator
 from .runtime import ClaudeCodeRuntime
@@ -13,8 +11,10 @@ from .runtime import ClaudeCodeRuntime
 
 def main() -> None:
     config = Config.from_env()
-    client = anthropic.Anthropic()
-    runtime = ClaudeCodeRuntime(client)
+    runtime = ClaudeCodeRuntime.from_env()
+
+    sys.stderr.write(f"[praxis] auth: {runtime.auth_method}\n")
+
     orch = Orchestrator(runtime, config)
 
     if len(sys.argv) > 1:

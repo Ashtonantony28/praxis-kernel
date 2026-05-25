@@ -49,11 +49,18 @@ EXTERNAL_URL_RE = re.compile(
     r"https?://(?!(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]))"
 )
 LOCALHOST_RE = re.compile(r"\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1)\b")
-WRITE_REDIRECT_RE = re.compile(r"(?:>>?|<>)\s*(/[^\s;|&'\"]+)")
-DESTRUCTIVE_PATH_RE = re.compile(
-    r"\b(?:rm|mv|cp|chmod|chown|tee|truncate|install|ln)\b[^|;&]*?(/[^\s;|&'\"]+)"
+
+# -- Path extraction (handles quoted paths with spaces) ----------------------
+_PATH_TOKEN_RE = re.compile(
+    r'"(/[^"]*)"'
+    r"|'(/[^']*)'"
+    r"|(?:(?<=\s)|(?:^))(/[^\s;|&\"']+)"
 )
-SED_INPLACE_RE = re.compile(r"\bsed\b[^|;&]*?-i[^|;&]*?(/[^\s;|&'\"]+)")
+_REDIRECT_RE = re.compile(r"(?:>>?|<>)")
+_DESTRUCTIVE_CMD_RE = re.compile(
+    r"\b(?:rm|mv|cp|chmod|chown|tee|truncate|install|ln)\b"
+)
+_SED_INPLACE_CMD_RE = re.compile(r"\bsed\b[^|;&]*?-i")
 
 
 def block(reason: str) -> "None":
@@ -93,6 +100,21 @@ def check_file_path(raw: str, tool: str) -> None:
         )
 
 
+def _segment_after(cmd: str, end: int) -> str:
+    """Return command text from *end* to the next pipe/semicolon/ampersand."""
+    rest = cmd[end:]
+    boundary = re.search(r"[|;&]", rest)
+    return rest[: boundary.start()] if boundary else rest
+
+
+def _extract_paths(segment: str) -> list[str]:
+    """Extract absolute-path tokens, handling quoted paths with spaces."""
+    return [
+        next(g for g in m.groups() if g is not None)
+        for m in _PATH_TOKEN_RE.finditer(segment)
+    ]
+
+
 def check_bash(cmd: str) -> None:
     net_match = NETWORK_CMD_RE.search(cmd)
     if net_match:
@@ -107,9 +129,21 @@ def check_bash(cmd: str) -> None:
             )
 
     candidate_paths: list[str] = []
-    candidate_paths += WRITE_REDIRECT_RE.findall(cmd)
-    candidate_paths += DESTRUCTIVE_PATH_RE.findall(cmd)
-    candidate_paths += SED_INPLACE_RE.findall(cmd)
+
+    for m in _REDIRECT_RE.finditer(cmd):
+        candidate_paths.extend(
+            _extract_paths(_segment_after(cmd, m.end()))
+        )
+
+    for m in _DESTRUCTIVE_CMD_RE.finditer(cmd):
+        candidate_paths.extend(
+            _extract_paths(_segment_after(cmd, m.end()))
+        )
+
+    for m in _SED_INPLACE_CMD_RE.finditer(cmd):
+        candidate_paths.extend(
+            _extract_paths(_segment_after(cmd, m.end()))
+        )
 
     for raw in candidate_paths:
         resolved = resolve(raw)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from .base import Runtime, ToolExecutor
@@ -16,8 +17,38 @@ class ClaudeCodeRuntime(Runtime):
     orchestrator's _run_loop / _process_tool_calls / _extract_text.
     """
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, *, auth_method: str = "api_key") -> None:
         self.client = client
+        self.auth_method = auth_method
+
+    @classmethod
+    def from_env(cls) -> "ClaudeCodeRuntime":
+        """Create runtime from environment variables.
+
+        Priority: CLAUDE_CODE_OAUTH_TOKEN (subscription) first,
+        ANTHROPIC_API_KEY (pay-per-token) second, error if neither.
+
+        When OAuth is active, ANTHROPIC_API_KEY is scrubbed from the
+        environment to prevent silent override by the SDK or subprocesses.
+        """
+        import anthropic
+
+        oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+        if oauth_token:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            client = anthropic.Anthropic(api_key=oauth_token)
+            return cls(client, auth_method="oauth")
+        elif api_key:
+            client = anthropic.Anthropic()
+            return cls(client, auth_method="api_key")
+        else:
+            raise SystemExit(
+                "[praxis] fatal: no auth configured.\n"
+                "Set CLAUDE_CODE_OAUTH_TOKEN (subscription, flat cost) "
+                "or ANTHROPIC_API_KEY (pay-per-token)."
+            )
 
     def run_loop(
         self,
