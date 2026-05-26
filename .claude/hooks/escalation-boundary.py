@@ -37,7 +37,10 @@ def _require_env(name: str) -> Path:
 WORKSPACE_ROOT = _require_env("PRAXIS_WORKSPACE_ROOT")
 MEMORY_ROOT = _require_env("PRAXIS_MEMORY_ROOT")
 CONTROL_PLANE = WORKSPACE_ROOT / ".claude"
-ALLOWED_DOMAINS: frozenset[str] = frozenset()
+_domains_str = os.environ.get("PRAXIS_ALLOWED_DOMAINS", "")
+ALLOWED_DOMAINS: frozenset[str] = frozenset(
+    d.strip() for d in _domains_str.split(",") if d.strip()
+)
 
 NETWORK_TOOLS = {"WebFetch", "WebSearch"}
 MUTATING_FILE_TOOLS = {"Write", "Edit", "NotebookEdit"}
@@ -182,6 +185,16 @@ def main() -> None:
         cmd = args.get("command", "")
         if isinstance(cmd, str) and cmd.strip():
             check_bash(cmd)
+
+    if tool == "WebResearch":
+        url = args.get("url", "")
+        if url:
+            from urllib.parse import urlparse
+            domain = urlparse(url).hostname or ""
+            if domain and domain not in ALLOWED_DOMAINS:
+                block(
+                    f"WebResearch fetch domain '{domain}' not in ALLOWED_DOMAINS"
+                )
 
     sys.exit(0)
 
