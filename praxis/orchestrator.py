@@ -6,6 +6,7 @@ from typing import Any
 
 from .config import Config
 from .hooks import run_pretool_hook
+from .integrations import INTEGRATION_IMPLEMENTATIONS, get_integration_schemas
 from .runtime.base import Runtime
 from .subagents import load_subagents
 from .tools import TOOL_IMPLEMENTATIONS, get_tool_schemas
@@ -39,11 +40,12 @@ class Orchestrator:
         """Run the orchestrator agent loop with the full system prompt."""
         import os
         model = model or os.environ.get("PRAXIS_MODEL", "claude-sonnet-4-6")
+        all_schemas = get_tool_schemas() + get_integration_schemas()
         return self.runtime.run_loop(
             model=model,
             system=self.system_prompt,
             user_message=user_message,
-            tool_schemas=get_tool_schemas(),
+            tool_schemas=all_schemas,
             tool_executor=self._execute_with_hook,
         )
 
@@ -58,11 +60,13 @@ class Orchestrator:
             return f"Error: unknown subagent '{name}'. Available: {available}"
         defn = self.subagents[name]
         runtime = self.runtime_overrides.get(name, self.runtime)
+        core_schemas = get_tool_schemas(defn.tools)
+        integration_schemas = get_integration_schemas(defn.tools)
         return runtime.spawn_subagent(
             model=defn.model,
             system=defn.system_prompt,
             prompt=prompt,
-            tool_schemas=get_tool_schemas(defn.tools),
+            tool_schemas=core_schemas + integration_schemas,
             tool_executor=self._execute_with_hook,
         )
 
@@ -80,7 +84,7 @@ class Orchestrator:
                 tool_input.get("name", ""), tool_input.get("prompt", "")
             )
 
-        impl = TOOL_IMPLEMENTATIONS.get(tool_name)
+        impl = TOOL_IMPLEMENTATIONS.get(tool_name) or INTEGRATION_IMPLEMENTATIONS.get(tool_name)
         if impl is None:
             return f"Error: unknown tool '{tool_name}'"
 

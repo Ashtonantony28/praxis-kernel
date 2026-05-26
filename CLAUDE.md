@@ -16,6 +16,12 @@ praxis/                          # Python orchestrator package
   subagents.py                   # Parses .claude/agents/*.md into SubagentDef
   hooks.py                       # Runs escalation-boundary.py as PreToolUse check
   tools.py                       # Tool schemas + implementations (Bash, Read, Edit, Write, Grep, Glob, Agent)
+  integrations/                  # Workstation integrations (Phase 4)
+    __init__.py                  #   Aggregates INTEGRATION_SCHEMAS + INTEGRATION_IMPLEMENTATIONS
+    github.py                    #   GitHub via `gh` CLI — PRs, issues, diffs
+    codebase.py                  #   Coverage, complexity, lint via subprocess
+    testrunner.py                #   pytest runner with parsed output
+    dependencies.py              #   pip outdated + pip-audit vulnerability check
   queue.py                       # TaskQueue — CRUD on .praxis/queue/tasks.jsonl (Phase J)
   checkpoint.py                  # CheckpointStore — multi-stage task resumption (Phase J)
   queue_runner.py                # Queue processing loop — polls tasks, runs through orchestrator (Phase J)
@@ -31,7 +37,7 @@ praxis/                          # Python orchestrator package
 .claude/agents/                  # Subagent definitions (builder, planner, scout, scribe, verifier)
 .claude/hooks/escalation-boundary.py  # §5 hook — blocks out-of-workspace writes, network egress
 .claude/settings.json            # Claude Code hook wiring
-tests/                           # pytest suite (203 tests, all mocked — no real API calls)
+tests/                           # pytest suite (261 tests, all mocked — no real API calls)
 .praxis/memory/                  # Durable memory across sessions
 .praxis/queue/                   # Task queue directory (Phase J)
   tasks.jsonl                    #   One JSON task object per line
@@ -108,3 +114,10 @@ python -m pytest tests/ -v
 - **Checkpoints.** Multi-stage tasks (those with `stages` list) get checkpointed to `.praxis/queue/checkpoints/{task-id}.json` after each stage completes. On restart, incomplete staged tasks resume from the last completed stage instead of restarting from scratch. Checkpoint is deleted after all stages complete.
 - **Queue runner.** `run_queue_loop()` polls `tasks.jsonl` every 2s (configurable via `PRAXIS_QUEUE_POLL_INTERVAL`). Handles SIGTERM gracefully — finishes current task stage, then exits. Atomic tasks run as a single `orch.run()` call; staged tasks run each stage as a separate `orch.run()` call with checkpoint between.
 - **Daemon.** `python -m praxis --daemon` forks to background via `os.fork()`, writes PID to `.praxis/praxis.pid`, logs to `.praxis/logs/praxis.log`. `--stop` sends SIGTERM. `--status` reports running state + queue stats. No log rotation (out of scope).
+- **Workstation integrations.** Four subprocess-backed tools in `praxis/integrations/`:
+  - `GitHub` — wraps `gh` CLI. Actions: `pr_list`, `pr_view`, `issue_list`, `issue_view`, `pr_diff`. Requires `gh` installed and authenticated. Auth via `GITHUB_TOKEN` env var (read by `gh` automatically).
+  - `Analyze` — wraps `coverage`, `radon`, `pylint`. Actions: `coverage`, `complexity`, `lint`. Each tool checked independently — clear error if not installed.
+  - `TestRunner` — wraps `pytest`. Actions: `run` (with optional path/marker/keyword), `run_failed` (re-run last failures).
+  - `Dependencies` — wraps `pip` and `pip-audit`. Actions: `outdated` (JSON list of outdated packages), `audit` (vulnerability scan).
+  
+  All integrations use `subprocess.run` with `_subprocess_env()` for token propagation and `_redact_secrets()` for output filtering (including `GITHUB_TOKEN`). Each fails loudly with install instructions if the required CLI tool is missing. Integration tools are registered in the orchestrator alongside core tools — subagents can call them if their tool list includes the tool name. No credentials stored in code or logs.
