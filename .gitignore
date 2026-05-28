@@ -19,14 +19,31 @@ env/
 htmlcov/
 .pytest_cache/
 
-# Environment — never commit real credentials
+# Personal credentials — never commit
 .env
+.praxis/security/*
+!.praxis/security/.gitkeep
+
+# Personal wiki content — never commit
+wiki/raw/*
+!wiki/raw/.gitkeep
+wiki/pages/*
+!wiki/pages/.gitkeep
+wiki/graph.json
+wiki/index.md
+wiki/log.md
+
+# Operational state — never commit
+.praxis/memory/*
+!.praxis/memory/.gitkeep
+.praxis/staging/*
+!.praxis/staging/.gitkeep
+.praxis/queue/*
+!.praxis/queue/.gitkeep
+.praxis/logs/*
+!.praxis/logs/.gitkeep
+.praxis/praxis.pid
+.praxis/schedule/*
 
 # Claude Code local settings override
 .claude/settings.local.json
-
-# Praxis local state
-.praxis/queue/
-.praxis/staging/
-.praxis/logs/
-.praxis/praxis.pid
