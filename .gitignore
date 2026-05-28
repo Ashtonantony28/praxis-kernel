@@ -47,3 +47,5 @@ wiki/log.md
 
 # Claude Code local settings override
 .claude/settings.local.json
+STATUS.md
+=1.0
