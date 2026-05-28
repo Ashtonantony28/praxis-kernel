@@ -1,7 +1,7 @@
 ---
 name: scout
 description: Read-only investigation and research. Use proactively to locate files, grep for symbols, summarize unfamiliar areas of the workspace, or answer "where is X / which files reference Y" questions. Returns findings only — never makes changes. Safe to run in the background and in parallel.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob
 model: haiku
 ---
 

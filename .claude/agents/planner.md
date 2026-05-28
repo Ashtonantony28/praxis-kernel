@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Turns a goal into a concrete, ordered, reversibility-annotated plan. Read-only — produces a plan, never executes it. Use before non-trivial work, before any irreversible change, and whenever the request is ambiguous enough that acting risks doing the wrong thing well.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob
 model: sonnet
 ---
 
