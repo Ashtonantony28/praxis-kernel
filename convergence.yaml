@@ -1,0 +1,36 @@
+# Praxis convergence configuration
+# Uncomment and edit sections to activate routing.
+
+runtimes:
+  default: claude
+  # Per-subagent runtime overrides (uncomment to activate):
+  # overrides:
+  #   scout: cloud
+  #   scribe: local
+
+# Task-type routing: maps detected task types to runtimes.
+# detect_task_type() infers type from queue task prompts via keyword matching.
+# Supported task types: audit, implement, review, scribe, default
+task_types:
+  audit:
+    runtime: claude
+    # model: haiku   # uncomment to use cheapest model for audits
+  implement:
+    runtime: claude
+  review:
+    runtime: claude
+  scribe:
+    runtime: claude
+    # model: haiku   # uncomment to use cheapest model for scribe tasks
+  default:
+    runtime: claude
+
+# Local runtime settings (used when runtime: local)
+# local:
+#   base_url: http://localhost:11434
+#   model: llama3.1:8b
+
+# Cloud runtime settings (used when runtime: cloud)
+# cloud:
+#   base_url: https://api.openai.com/v1
+#   model: gpt-4o

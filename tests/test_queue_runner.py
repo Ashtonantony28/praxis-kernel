@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -174,3 +175,142 @@ def test_staged_task_pauses_on_shutdown(queue: TaskQueue, mock_orch: MagicMock, 
     cp = cp_store.load(task.id)
     assert cp is not None
     assert 0 in cp.completed
+
+
+# ---------- Rate limiting ----------
+
+
+class TestRateLimiting:
+    """Tests for PRAXIS_MAX_CONCURRENT_TASKS rate limit in run_queue_loop()."""
+
+    def test_rate_limit_respected(self, tmp_path: Path):
+        """When running==max_concurrent, loop sleeps without calling next_pending()."""
+        import praxis.queue_runner as qr
+
+        mock_queue = MagicMock()
+        mock_queue.stats.return_value = {"pending": 1, "running": 3, "done": 0, "failed": 0}
+        mock_queue.next_pending.return_value = None
+
+        call_count = 0
+
+        def fake_sleep(n):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                qr._shutdown_requested = True
+
+        with patch.dict(os.environ, {"PRAXIS_MAX_CONCURRENT_TASKS": "3"}):
+            with patch("praxis.queue_runner.TaskQueue", return_value=mock_queue):
+                with patch("praxis.queue_runner.CheckpointStore"):
+                    with patch("praxis.queue_runner.Config"):
+                        with patch("praxis.queue_runner.ConvergenceConfig"):
+                            with patch("praxis.queue_runner._create_runtimes_for_queue", return_value=(MagicMock(), {}, {})):
+                                with patch("praxis.queue_runner.Orchestrator"):
+                                    with patch("praxis.queue_runner.time.sleep", side_effect=fake_sleep):
+                                        try:
+                                            qr.run_queue_loop(tmp_path)
+                                        finally:
+                                            qr._shutdown_requested = False
+
+        # next_pending must never have been called because running >= max_concurrent
+        mock_queue.next_pending.assert_not_called()
+
+    def test_rate_limit_allows_below_cap(self, tmp_path: Path):
+        """When running < max_concurrent, loop calls next_pending() normally."""
+        import praxis.queue_runner as qr
+
+        mock_queue = MagicMock()
+        # 2 running, cap is 3 → slot available
+        mock_queue.stats.return_value = {"pending": 1, "running": 2, "done": 0, "failed": 0}
+        mock_queue.next_pending.return_value = None  # returns None so loop sleeps then exits
+
+        sleep_count = 0
+
+        def fake_sleep(n):
+            nonlocal sleep_count
+            sleep_count += 1
+            qr._shutdown_requested = True
+
+        with patch.dict(os.environ, {"PRAXIS_MAX_CONCURRENT_TASKS": "3"}):
+            with patch("praxis.queue_runner.TaskQueue", return_value=mock_queue):
+                with patch("praxis.queue_runner.CheckpointStore"):
+                    with patch("praxis.queue_runner.Config"):
+                        with patch("praxis.queue_runner.ConvergenceConfig"):
+                            with patch("praxis.queue_runner._create_runtimes_for_queue", return_value=(MagicMock(), {}, {})):
+                                with patch("praxis.queue_runner.Orchestrator"):
+                                    with patch("praxis.queue_runner.time.sleep", side_effect=fake_sleep):
+                                        try:
+                                            qr.run_queue_loop(tmp_path)
+                                        finally:
+                                            qr._shutdown_requested = False
+
+        # next_pending was called (slot was available)
+        mock_queue.next_pending.assert_called()
+
+    def test_rate_limit_env_var_override(self, tmp_path: Path):
+        """When PRAXIS_MAX_CONCURRENT_TASKS=1, cap is respected at 1."""
+        import praxis.queue_runner as qr
+
+        mock_queue = MagicMock()
+        # 1 running, cap=1 → at cap → should NOT call next_pending
+        mock_queue.stats.return_value = {"pending": 1, "running": 1, "done": 0, "failed": 0}
+        mock_queue.next_pending.return_value = None
+
+        call_count = 0
+
+        def fake_sleep(n):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                qr._shutdown_requested = True
+
+        with patch.dict(os.environ, {"PRAXIS_MAX_CONCURRENT_TASKS": "1"}):
+            with patch("praxis.queue_runner.TaskQueue", return_value=mock_queue):
+                with patch("praxis.queue_runner.CheckpointStore"):
+                    with patch("praxis.queue_runner.Config"):
+                        with patch("praxis.queue_runner.ConvergenceConfig"):
+                            with patch("praxis.queue_runner._create_runtimes_for_queue", return_value=(MagicMock(), {}, {})):
+                                with patch("praxis.queue_runner.Orchestrator"):
+                                    with patch("praxis.queue_runner.time.sleep", side_effect=fake_sleep):
+                                        try:
+                                            qr.run_queue_loop(tmp_path)
+                                        finally:
+                                            qr._shutdown_requested = False
+
+        # At cap (running=1, max=1) → next_pending never called
+        mock_queue.next_pending.assert_not_called()
+
+    def test_rate_limit_default_is_3(self, tmp_path: Path):
+        """When PRAXIS_MAX_CONCURRENT_TASKS is unset, default of 3 is used."""
+        import praxis.queue_runner as qr
+
+        mock_queue = MagicMock()
+        # 3 running, unset env → default 3 → at cap → should NOT call next_pending
+        mock_queue.stats.return_value = {"pending": 1, "running": 3, "done": 0, "failed": 0}
+        mock_queue.next_pending.return_value = None
+
+        call_count = 0
+
+        def fake_sleep(n):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                qr._shutdown_requested = True
+
+        # Remove the env var if present to test the default
+        env_without_key = {k: v for k, v in os.environ.items() if k != "PRAXIS_MAX_CONCURRENT_TASKS"}
+        with patch.dict(os.environ, env_without_key, clear=True):
+            with patch("praxis.queue_runner.TaskQueue", return_value=mock_queue):
+                with patch("praxis.queue_runner.CheckpointStore"):
+                    with patch("praxis.queue_runner.Config"):
+                        with patch("praxis.queue_runner.ConvergenceConfig"):
+                            with patch("praxis.queue_runner._create_runtimes_for_queue", return_value=(MagicMock(), {}, {})):
+                                with patch("praxis.queue_runner.Orchestrator"):
+                                    with patch("praxis.queue_runner.time.sleep", side_effect=fake_sleep):
+                                        try:
+                                            qr.run_queue_loop(tmp_path)
+                                        finally:
+                                            qr._shutdown_requested = False
+
+        # At cap with default=3 → next_pending never called
+        mock_queue.next_pending.assert_not_called()

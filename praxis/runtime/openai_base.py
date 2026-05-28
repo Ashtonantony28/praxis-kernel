@@ -13,6 +13,7 @@ import json
 from typing import Any
 
 from .base import Runtime, ToolExecutor
+from .cost import CostCircuitBreaker
 
 MAX_TURNS = 50
 MAX_CONTEXT_MESSAGES = 40   # trigger compaction above this
@@ -38,6 +39,7 @@ class OpenAIBaseRuntime(Runtime):
         self.client = client
         self.default_model = default_model
         self.base_url = base_url
+        self._cost_breaker = CostCircuitBreaker.from_env()
 
     def run_loop(
         self,
@@ -67,6 +69,18 @@ class OpenAIBaseRuntime(Runtime):
                 kwargs["tools"] = openai_tools
 
             response = self._call_api(**kwargs)
+
+            # Record estimated cost; trip breaker if session cap exceeded
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                try:
+                    self._cost_breaker.record_call(
+                        resolved_model,
+                        int(getattr(usage, "prompt_tokens", 0) or 0),
+                        int(getattr(usage, "completion_tokens", 0) or 0),
+                    )
+                except (TypeError, ValueError):
+                    pass
 
             if not response.choices:
                 raise SystemExit(
@@ -155,7 +169,27 @@ class OpenAIBaseRuntime(Runtime):
                 )
                 continue
 
+            import time as _time
+            _t0 = _time.monotonic()
             output = tool_executor(name, args)
+            _latency_ms = (_time.monotonic() - _t0) * 1000
+
+            # Record telemetry — never let this break the main loop
+            try:
+                from datetime import datetime, timezone
+                from .telemetry import TelemetryEvent, TelemetryStore
+                _hook_result = "blocked" if str(output).startswith("BLOCKED by §5") else "allowed"
+                TelemetryStore.get_global().record(TelemetryEvent(
+                    tool_name=name,
+                    latency_ms=_latency_ms,
+                    hook_result=_hook_result,
+                    caller="OpenAIBaseRuntime",
+                    token_count=None,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                ))
+            except Exception:
+                pass
+
             results.append(
                 {
                     "role": "tool",

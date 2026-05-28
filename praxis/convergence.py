@@ -12,6 +12,40 @@ VALID_RUNTIMES = {"claude", "local", "cloud"}
 
 
 @dataclass(frozen=True)
+class TaskTypeRule:
+    """Runtime routing rule for a detected task type."""
+
+    runtime: str
+    model: str | None = None
+
+
+TASK_TYPE_KEYWORDS: dict[str, list[str]] = {
+    "audit": ["audit", "inventory", "verify", "inspect", "check", "scan", "baseline"],
+    "implement": ["implement", "create", "build", "add feature", "fix", "refactor", "update code"],
+    "review": ["review", "analyze", "analyse", "assess", "evaluate", "critique", "examine"],
+    "scribe": ["update claude.md", "update readme", "update status.md", "scribe", "write docs", "write handoff", "document"],
+}
+
+
+def detect_task_type(prompt: str) -> str:
+    """Detect task type from prompt via keyword matching.
+
+    Returns the task type with the highest keyword match count.
+    Ties broken arbitrarily. Returns "default" if no keywords match.
+    This is a deterministic, cheap string match — no LLM call.
+    """
+    lower = prompt.lower()
+    scores: dict[str, int] = {}
+    for task_type, keywords in TASK_TYPE_KEYWORDS.items():
+        count = sum(1 for kw in keywords if kw in lower)
+        if count > 0:
+            scores[task_type] = count
+    if not scores:
+        return "default"
+    return max(scores, key=lambda t: scores[t])
+
+
+@dataclass(frozen=True)
 class ConvergenceConfig:
     """Parsed convergence.yaml — controls which runtime each role uses."""
 
@@ -21,6 +55,7 @@ class ConvergenceConfig:
     local_model: str = "llama3.1:8b"
     cloud_base_url: str = "https://api.openai.com/v1"
     cloud_model: str = "gpt-4o"
+    task_type_rules: dict[str, TaskTypeRule] = field(default_factory=dict)
 
     @classmethod
     def load(cls, workspace_root: Path) -> "ConvergenceConfig":
@@ -85,6 +120,24 @@ class ConvergenceConfig:
             cloud_section.get("model", "gpt-4o"),
         )
 
+        # Task-type routing rules
+        task_types_section = data.get("task_types", {}) or {}
+        task_type_rules: dict[str, TaskTypeRule] = {}
+        for task_type_name, rule_data in task_types_section.items():
+            if not isinstance(rule_data, dict):
+                continue
+            rt = rule_data.get("runtime", "")
+            if rt and rt.lower() not in VALID_RUNTIMES:
+                raise SystemExit(
+                    f"[praxis] fatal: unknown runtime {rt!r} for task_type "
+                    f"'{task_type_name}' in convergence.yaml.\n"
+                    f"Valid runtimes: {', '.join(sorted(VALID_RUNTIMES))}"
+                )
+            task_type_rules[task_type_name] = TaskTypeRule(
+                runtime=rt.lower() if rt else "",
+                model=rule_data.get("model"),
+            )
+
         return cls(
             default_runtime=default_runtime,
             overrides=overrides,
@@ -92,20 +145,57 @@ class ConvergenceConfig:
             local_model=local_model,
             cloud_base_url=cloud_base_url,
             cloud_model=cloud_model,
+            task_type_rules=task_type_rules,
         )
 
     def needs_local(self) -> bool:
         """Whether any route requires the local runtime."""
-        return self.default_runtime == "local" or "local" in self.overrides.values()
+        return (
+            self.default_runtime == "local"
+            or "local" in self.overrides.values()
+            or any(r.runtime == "local" for r in self.task_type_rules.values())
+        )
 
     def needs_claude(self) -> bool:
         """Whether any route requires the claude runtime."""
-        return self.default_runtime == "claude" or "claude" in self.overrides.values()
+        return (
+            self.default_runtime == "claude"
+            or "claude" in self.overrides.values()
+            or any(r.runtime == "claude" for r in self.task_type_rules.values())
+        )
 
     def needs_cloud(self) -> bool:
         """Whether any route requires the cloud runtime."""
-        return self.default_runtime == "cloud" or "cloud" in self.overrides.values()
+        return (
+            self.default_runtime == "cloud"
+            or "cloud" in self.overrides.values()
+            or any(r.runtime == "cloud" for r in self.task_type_rules.values())
+        )
 
     def runtime_for(self, subagent_name: str) -> str:
         """Return the runtime name for a given subagent."""
         return self.overrides.get(subagent_name, self.default_runtime)
+
+    def runtime_for_task_type(self, task_type: str) -> str:
+        """Return runtime name for a detected task type.
+
+        Priority: exact task_type match → "default" rule → default_runtime.
+        Returns default_runtime if no task_type_rules are configured.
+        """
+        rule = self.task_type_rules.get(task_type)
+        if rule and rule.runtime:
+            return rule.runtime
+        default_rule = self.task_type_rules.get("default")
+        if default_rule and default_rule.runtime:
+            return default_rule.runtime
+        return self.default_runtime
+
+    def model_for_task_type(self, task_type: str) -> str | None:
+        """Return model override for a detected task type, or None."""
+        rule = self.task_type_rules.get(task_type)
+        if rule and rule.model:
+            return rule.model
+        default_rule = self.task_type_rules.get("default")
+        if default_rule and default_rule.model:
+            return default_rule.model
+        return None

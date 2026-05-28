@@ -5,6 +5,7 @@ from .claude_code import ClaudeCodeRuntime
 from .cloud import OpenAICloudRuntime
 from .local import LocalRuntime
 from .openai_base import OpenAIBaseRuntime
+from .telemetry import TelemetryEvent, TelemetryStore
 
 __all__ = [
     "Runtime",
@@ -12,4 +13,6 @@ __all__ = [
     "LocalRuntime",
     "OpenAICloudRuntime",
     "OpenAIBaseRuntime",
+    "TelemetryEvent",
+    "TelemetryStore",
 ]

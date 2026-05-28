@@ -11,7 +11,7 @@ is staged locally. You run `python -m praxis --approve` in the
 morning to review and execute. There is no code path that acts 
 on your behalf without you.
 
-**Verify it** — 674 tests, a §5 security hook that intercepts 
+**Verify it** — 767 tests, a §5 security hook that intercepts 
 every tool call before execution, and a financial circuit breaker 
 that halts the system if session costs exceed your configured cap.
 
@@ -53,7 +53,21 @@ bash install.sh
 
 The installer checks Python 3.10+, creates a virtual environment, installs the package, and prints a setup checklist.
 
-Then edit `.env` with your auth credentials and run:
+```bash
+# Run the setup wizard (no manual .env editing required)
+python -m praxis --setup
+```
+
+The wizard takes you through runtime selection, credential entry (all hidden with getpass), and optional integrations (Slack, GitHub, web search, email). It writes your `.env` file and can schedule a morning briefing in under 5 minutes.
+
+After setup:
+```bash
+source .venv/bin/activate
+python -m praxis --daemon    # start background operation
+python -m praxis --status    # verify it's running
+```
+
+Or run interactively:
 
 ```bash
 source .venv/bin/activate
@@ -279,6 +293,75 @@ export PRAXIS_MAX_SESSION_COST=5.00
 # On breach: dumps trace to .praxis/logs/cost-circuit-break-{timestamp}.json and exits 3
 ```
 
+## Scheduled Triggers (Option I)
+
+Make Praxis autonomous without manual session kicks. The daemon automatically runs a cron-style scheduler in a background thread.
+
+```bash
+# Install scheduler dep
+pip install praxis[scheduler]
+
+# Add a schedule (cron syntax)
+python -m praxis --schedule-add 'morning-briefing' '0 7 * * *' 'wiki query: what are my priorities today?'
+python -m praxis --schedule-add 'linear-sync' '0 9-18 * * 1-5' 'linear list_issues: assigned to me'
+python -m praxis --schedule-add 'weekly-lint' '0 9 * * 0' 'wiki lint: report stale facts'
+
+# Manage schedules
+python -m praxis --schedule-list
+python -m praxis --schedule-enable  <id>
+python -m praxis --schedule-disable <id>
+python -m praxis --schedule-remove  <id>
+
+# Daemon auto-starts the scheduler (no extra flags needed)
+python -m praxis --daemon
+```
+
+Scheduler state: `.praxis/schedule/tasks.json`. Log: `.praxis/logs/scheduler.log`.
+Poll interval: `PRAXIS_SCHEDULER_POLL_INTERVAL=60` (seconds, default 60).
+
+Dedup: if a scheduled task's prompt is already pending or running in the queue, it is skipped rather than queued a second time.
+
+## Wiki → Notion / Linear Sync (Option J)
+
+Praxis's bitemporal wiki can be synced to Notion pages or Linear issues. All
+external writes are **staged** — they never execute automatically, only after
+`python -m praxis --approve`.
+
+### Export and sync
+
+```bash
+# Stage wiki page 'alice' as a Notion page under parent page/database ID
+python -m praxis --wiki-sync-notion alice your-notion-parent-id
+
+# Stage wiki page 'alice' as a Linear issue in team 'team-xyz'
+python -m praxis --wiki-sync-linear alice team-xyz
+
+# Link wiki page 'alice' to existing Linear issue LIN-42 (local frontmatter update)
+python -m praxis --wiki-link-issue alice LIN-42
+
+# Pull current status of all Linear-linked wiki pages and stage update proposals
+python -m praxis --queue  # or start interactively and call pull_linear_updates
+```
+
+### Reverse sync
+
+`pull_linear_updates()` reads the Linear API for all wiki pages with a
+`linear_issue_id` frontmatter field and stages update proposals to
+`.praxis/staging/wiki_updates.jsonl`. Review them with `--list-staged`.
+
+### Required setup
+
+- Notion sync: `PRAXIS_NOTION_TOKEN` + `api.notion.com` in `PRAXIS_ALLOWED_DOMAINS`
+- Linear sync: `PRAXIS_LINEAR_API_KEY` + `api.linear.app` in `PRAXIS_ALLOWED_DOMAINS`
+
+### §5 compliance
+
+- `sync_to_notion` and `sync_to_linear` never call external APIs — they stage to
+  `.praxis/staging/external_actions.jsonl`. Run `python -m praxis --approve` to review.
+- `link_linear_issue` writes only to `wiki/pages/` (inside `WORKSPACE_ROOT`).
+- `pull_linear_updates` reads the Linear API (already-allowlisted domain) and
+  stages results locally — no autonomous external writes.
+
 ## Queue and Daemon
 
 Praxis can run unattended, processing tasks from a queue:
@@ -297,7 +380,7 @@ Multi-stage tasks are checkpointed — if the daemon crashes, it resumes from th
 
 ```bash
 pip install praxis[dev]
-python -m pytest tests/ -v          # 578 tests, all mocked
+python -m pytest tests/ -v          # 767 tests, all mocked
 ```
 
 No real API calls. All tests use a mock client from `tests/conftest.py`.

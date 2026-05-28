@@ -98,10 +98,8 @@ class OpenAICloudRuntime(OpenAIBaseRuntime):
                         f"[praxis] fatal: cloud API error (HTTP {exc.status_code}) — {exc.message}"
                     )
             except openai.AuthenticationError:
-                raise SystemExit(
-                    "[praxis] fatal: cloud API rejected authentication.\n"
-                    "Check your PRAXIS_CLOUD_API_KEY."
-                )
+                from .auth import graceful_auth_error_message
+                raise SystemExit(graceful_auth_error_message("cloud"))
             except openai.APIConnectionError:
                 raise SystemExit(
                     f"[praxis] fatal: cannot connect to cloud API at {self.base_url}.\n"

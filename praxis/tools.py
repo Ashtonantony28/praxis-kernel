@@ -27,6 +27,8 @@ def _redact_secrets(text: str) -> str:
     for var in (
         "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "GITHUB_TOKEN",
         "PRAXIS_WEB_SEARCH_API_KEY", "PRAXIS_EMAIL_PASSWORD", "PRAXIS_CALENDAR_URL",
+        "PRAXIS_SLACK_WEBHOOK_URL", "PRAXIS_SLACK_BOT_TOKEN", "PRAXIS_SLACK_APP_TOKEN",
+        "PRAXIS_NOTION_TOKEN", "PRAXIS_LINEAR_API_KEY",
     ):
         val = os.environ.get(var)
         if val and val in text:

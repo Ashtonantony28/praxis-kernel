@@ -5,12 +5,13 @@ from __future__ import annotations
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
 from .checkpoint import Checkpoint, CheckpointStore
 from .config import Config
-from .convergence import ConvergenceConfig
+from .convergence import ConvergenceConfig, detect_task_type
 from .orchestrator import Orchestrator
 from .queue import Task, TaskQueue
 from .runtime import ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
@@ -26,8 +27,14 @@ def _handle_sigterm(signum: int, frame: object) -> None:
     sys.stderr.write("[praxis] shutdown requested, finishing current task…\n")
 
 
-def _create_runtimes_for_queue(conv: ConvergenceConfig) -> tuple[Runtime, dict[str, Runtime]]:
-    """Create runtimes — same logic as __main__._create_runtimes."""
+def _create_runtimes_for_queue(
+    conv: ConvergenceConfig,
+) -> tuple[Runtime, dict[str, Runtime], dict[str, Runtime]]:
+    """Create runtimes — same logic as __main__._create_runtimes.
+
+    Returns (default_runtime, subagent_overrides, all_runtimes_by_name).
+    all_runtimes_by_name is keyed by runtime name string (e.g. "claude", "cloud").
+    """
     runtimes: dict[str, Runtime] = {}
 
     if conv.needs_claude():
@@ -51,15 +58,40 @@ def _create_runtimes_for_queue(conv: ConvergenceConfig) -> tuple[Runtime, dict[s
         for name, rt_name in conv.overrides.items()
         if rt_name != conv.default_runtime
     }
-    return default, overrides
+    return default, overrides, runtimes
 
 
-def _run_single_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store: CheckpointStore) -> None:
-    """Execute a single task, with checkpoint support for multi-stage tasks."""
+def _run_single_task(
+    task: Task,
+    orch: Orchestrator,
+    queue: TaskQueue,
+    cp_store: CheckpointStore,
+    *,
+    conv: "ConvergenceConfig | None" = None,
+    all_runtimes: "dict[str, Runtime] | None" = None,
+    config: "Config | None" = None,
+) -> None:
+    """Execute a single task, with checkpoint support for multi-stage tasks.
+
+    When conv, all_runtimes, and config are provided, detects the task type
+    from the prompt and routes to the appropriate runtime if configured.
+    """
+    # Task-type routing: select runtime based on detected task type
+    task_orch = orch
+    if conv is not None and all_runtimes is not None and config is not None:
+        task_type = detect_task_type(task.prompt)
+        runtime_name = conv.runtime_for_task_type(task_type)
+        if runtime_name != conv.default_runtime and runtime_name in all_runtimes:
+            sys.stderr.write(
+                f"[praxis] task {task.id}: type={task_type!r}, "
+                f"routing to runtime={runtime_name!r}\n"
+            )
+            task_orch = Orchestrator(all_runtimes[runtime_name], config)
+
     if task.stages:
-        _run_staged_task(task, orch, queue, cp_store)
+        _run_staged_task(task, task_orch, queue, cp_store)
     else:
-        _run_atomic_task(task, orch, queue)
+        _run_atomic_task(task, task_orch, queue)
 
 
 def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue) -> None:
@@ -125,6 +157,51 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
         sys.stderr.write(f"[praxis] task {task.id} failed at stage: {exc}\n")
 
 
+def _start_scheduler_thread(queue: TaskQueue, workspace_root: Path) -> None:
+    """Start a background daemon thread that runs CronScheduler.tick() on an interval.
+
+    - Reads PRAXIS_SCHEDULER_POLL_INTERVAL env var (default 60 seconds).
+    - Creates CronScheduler with schedule_file and log_file under workspace_root.
+    - Calls scheduler.load() before starting the thread.
+    - Thread is daemon=True — dies automatically when the main process exits.
+    - Thread loop: while True: scheduler.tick(); time.sleep(poll_interval)
+    - If croniter is not installed (ImportError), logs a warning and returns without
+      starting a thread (does NOT crash the queue runner).
+    """
+    try:
+        from praxis.scheduler import CronScheduler
+    except ImportError:
+        sys.stderr.write(
+            "[praxis] scheduler: croniter not installed — scheduled triggers disabled."
+            " Run: pip install praxis[scheduler]\n"
+        )
+        return
+
+    poll_interval = int(os.environ.get("PRAXIS_SCHEDULER_POLL_INTERVAL", "60"))
+
+    schedule_file = workspace_root / ".praxis" / "schedule" / "tasks.json"
+    log_file = workspace_root / ".praxis" / "logs" / "scheduler.log"
+
+    scheduler = CronScheduler(queue=queue, schedule_file=schedule_file, log_file=log_file)
+    scheduler.load()
+
+    sys.stderr.write(f"[praxis] scheduler: polling every {poll_interval}s\n")
+
+    # Use a threading.Event for sleep so tests that mock time.sleep don't interfere.
+    _stop_event = threading.Event()
+
+    def _scheduler_loop() -> None:
+        while True:
+            try:
+                scheduler.tick()
+            except Exception as exc:
+                sys.stderr.write(f"[praxis] scheduler: tick() raised unexpected error: {exc}\n")
+            _stop_event.wait(timeout=poll_interval)
+
+    thread = threading.Thread(target=_scheduler_loop, daemon=True, name="praxis-scheduler")
+    thread.start()
+
+
 def run_queue_loop(workspace: Path) -> None:
     """Main queue processing loop — polls for tasks and runs them."""
     signal.signal(signal.SIGTERM, _handle_sigterm)
@@ -132,7 +209,7 @@ def run_queue_loop(workspace: Path) -> None:
     poll_interval = int(os.environ.get("PRAXIS_QUEUE_POLL_INTERVAL", "2"))
     config = Config.from_env()
     conv = ConvergenceConfig.load(config.workspace_root)
-    default_runtime, runtime_overrides = _create_runtimes_for_queue(conv)
+    default_runtime, runtime_overrides, all_runtimes = _create_runtimes_for_queue(conv)
     orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides)
 
     queue_dir = workspace / ".praxis" / "queue"
@@ -150,14 +227,29 @@ def run_queue_loop(workspace: Path) -> None:
     if recovered:
         sys.stderr.write(f"[praxis] recovered {recovered} interrupted task(s)\n")
 
+    _start_scheduler_thread(queue, workspace)
+
+    max_concurrent = int(os.environ.get("PRAXIS_MAX_CONCURRENT_TASKS", "3"))
     sys.stderr.write(f"[praxis] queue loop started, polling every {poll_interval}s\n")
+    sys.stderr.write(f"[praxis] queue loop: max_concurrent={max_concurrent}\n")
 
     while not _shutdown_requested:
+        # Rate limit: do not start a new task if too many are already running
+        running = queue.stats().get("running", 0)
+        if running >= max_concurrent:
+            time.sleep(poll_interval)
+            continue
+
         task = queue.next_pending()
         if task is None:
             time.sleep(poll_interval)
             continue
 
-        _run_single_task(task, orch, queue, cp_store)
+        _run_single_task(
+            task, orch, queue, cp_store,
+            conv=conv,
+            all_runtimes=all_runtimes,
+            config=config,
+        )
 
     sys.stderr.write("[praxis] queue loop stopped\n")

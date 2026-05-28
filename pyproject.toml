@@ -21,6 +21,20 @@ analyze = [
     "pylint",
     "pip-audit",
 ]
+slack = [
+    "slack_sdk>=3.0",
+]
+mcp = [
+    "mcp>=1.0",
+    "uvicorn>=0.20",
+    "starlette>=0.27",
+]
+playwright = [
+    "playwright>=1.40",
+]
+scheduler = [
+    "croniter>=1.0",
+]
 dev = [
     "pytest>=8.0",
 ]
@@ -28,6 +42,10 @@ all = [
     "praxis[local]",
     "praxis[cloud]",
     "praxis[analyze]",
+    "praxis[slack]",
+    "praxis[mcp]",
+    "praxis[playwright]",
+    "praxis[scheduler]",
     "praxis[dev]",
 ]
 

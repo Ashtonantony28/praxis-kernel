@@ -326,3 +326,91 @@ def test_main_status_mode(tmp_path):
     ):
         main()
         mock_status.assert_called_once_with(tmp_path)
+
+
+# ---------- _parse_mode --list-staged ----------
+
+
+class TestListStaged:
+    """Tests for --list-staged subcommand."""
+
+    def test_parse_mode_list_staged(self):
+        """--list-staged flag parses to 'list_staged' mode."""
+        from praxis.__main__ import _parse_mode
+
+        assert _parse_mode(["praxis", "--list-staged"]) == "list_staged"
+
+    def test_list_staged_no_staging_dir(self, tmp_path, capsys):
+        """No .praxis/staging/ dir → 'No staged items' message."""
+        from praxis.__main__ import _run_list_staged
+
+        _run_list_staged(tmp_path)
+        captured = capsys.readouterr()
+        assert "No staged items" in captured.out
+
+    def test_list_staged_external_actions(self, tmp_path, capsys):
+        """external_actions.jsonl with pending entry is displayed."""
+        import json
+        from praxis.__main__ import _run_list_staged
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True)
+        actions_file = staging / "external_actions.jsonl"
+        entry = {
+            "status": "pending",
+            "provider": "notion",
+            "action": "create_page",
+            "queued_at": "2026-05-27T00:00:00",
+            "params": {},
+        }
+        actions_file.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+        _run_list_staged(tmp_path)
+        captured = capsys.readouterr()
+        assert "notion" in captured.out
+        assert "create_page" in captured.out
+
+    def test_list_staged_slack_messages(self, tmp_path, capsys):
+        """Slack staged messages directory with files is reported."""
+        from praxis.__main__ import _run_list_staged
+
+        slack_msgs = tmp_path / ".praxis" / "staging" / "slack" / "messages"
+        slack_msgs.mkdir(parents=True)
+        (slack_msgs / "abc.json").write_text('{"text": "hi"}', encoding="utf-8")
+
+        _run_list_staged(tmp_path)
+        captured = capsys.readouterr()
+        assert "Slack staged messages" in captured.out
+        assert "1" in captured.out
+
+    def test_list_staged_empty_staging_dir(self, tmp_path, capsys):
+        """Staging dir exists but nothing in it → 'No staged items'."""
+        from praxis.__main__ import _run_list_staged
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True)
+
+        _run_list_staged(tmp_path)
+        captured = capsys.readouterr()
+        assert "No staged items" in captured.out
+
+    def test_list_staged_skips_non_pending_actions(self, tmp_path, capsys):
+        """Only pending entries are counted; approved/rejected are ignored."""
+        import json
+        from praxis.__main__ import _run_list_staged
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True)
+        actions_file = staging / "external_actions.jsonl"
+        lines = [
+            json.dumps({"status": "approved", "provider": "linear", "action": "create_issue",
+                        "queued_at": "2026-05-27T00:00:00", "params": {}}),
+            json.dumps({"status": "rejected", "provider": "notion", "action": "update_page",
+                        "queued_at": "2026-05-27T00:00:00", "params": {}}),
+        ]
+        actions_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        _run_list_staged(tmp_path)
+        captured = capsys.readouterr()
+        # No pending entries, and no other staging dirs, so nothing should show
+        assert "No staged items" in captured.out

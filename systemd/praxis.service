@@ -1,0 +1,25 @@
+[Unit]
+Description=Praxis Agentic OS Kernel — queue processor
+Documentation=https://github.com/Ashtonantony28/Praxis_AgenticOSKernel
+After=network.target
+
+[Service]
+Type=simple
+User=praxis
+Group=praxis
+WorkingDirectory=/opt/praxis
+EnvironmentFile=/etc/praxis/env
+ExecStart=/opt/praxis/.venv/bin/python -m praxis --queue
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=praxis
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/praxis/.praxis /var/log/praxis
+
+[Install]
+WantedBy=multi-user.target

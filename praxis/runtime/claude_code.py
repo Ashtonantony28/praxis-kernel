@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from .base import Runtime, ToolExecutor
+from .cost import CostCircuitBreaker
 
 MAX_TURNS = 50
 RATE_LIMIT_MAX_RETRIES = 3
@@ -27,6 +28,7 @@ class ClaudeCodeRuntime(Runtime):
     def __init__(self, client: Any, *, auth_method: str = "api_key") -> None:
         self.client = client
         self.auth_method = auth_method
+        self._cost_breaker = CostCircuitBreaker.from_env()
 
     @classmethod
     def from_env(cls) -> "ClaudeCodeRuntime":
@@ -88,10 +90,8 @@ class ClaudeCodeRuntime(Runtime):
                     max_tokens=4096,
                 )
             except anthropic.AuthenticationError:
-                raise SystemExit(
-                    "[praxis] fatal: authentication failed. "
-                    "Check your CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY."
-                )
+                from .auth import graceful_auth_error_message
+                raise SystemExit(graceful_auth_error_message(self.auth_method))
             except anthropic.APIConnectionError as exc:
                 raise SystemExit(
                     f"[praxis] fatal: cannot reach Anthropic API — {exc}"
@@ -100,6 +100,18 @@ class ClaudeCodeRuntime(Runtime):
                 raise SystemExit(
                     f"[praxis] fatal: Anthropic API error (HTTP {exc.status_code}) — {exc.message}"
                 )
+
+            # Record estimated cost; trip breaker if session cap exceeded
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                try:
+                    self._cost_breaker.record_call(
+                        model,
+                        int(getattr(usage, "input_tokens", 0) or 0),
+                        int(getattr(usage, "output_tokens", 0) or 0),
+                    )
+                except (TypeError, ValueError):
+                    pass
 
             messages = self.manage_context(messages, "assistant", response.content)
 
@@ -138,11 +150,33 @@ class ClaudeCodeRuntime(Runtime):
         response_content: list[Any],
         tool_executor: ToolExecutor,
     ) -> list[dict[str, Any]]:
+        import time as _time
+        from datetime import datetime, timezone
+
         results: list[dict[str, Any]] = []
         for block in response_content:
             if getattr(block, "type", None) != "tool_use":
                 continue
+
+            _t0 = _time.monotonic()
             output = tool_executor(block.name, block.input)
+            _latency_ms = (_time.monotonic() - _t0) * 1000
+
+            # Record telemetry — never let this break the main loop
+            try:
+                from .telemetry import TelemetryEvent, TelemetryStore
+                _hook_result = "blocked" if str(output).startswith("BLOCKED by §5") else "allowed"
+                TelemetryStore.get_global().record(TelemetryEvent(
+                    tool_name=block.name,
+                    latency_ms=_latency_ms,
+                    hook_result=_hook_result,
+                    caller="ClaudeCodeRuntime",
+                    token_count=None,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                ))
+            except Exception:
+                pass
+
             results.append(
                 {
                     "type": "tool_result",

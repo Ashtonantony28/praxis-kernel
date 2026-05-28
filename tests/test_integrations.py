@@ -61,13 +61,15 @@ class TestRegistry:
     def test_all_schemas_registered(self):
         assert set(INTEGRATION_SCHEMAS.keys()) == {
             "GitHub", "Analyze", "TestRunner", "Dependencies", "WebResearch",
-            "FileManager", "Email", "Calendar",
+            "FileManager", "Email", "Calendar", "Wiki", "Slack",
+            "playwright", "notion", "linear",
         }
 
     def test_all_implementations_registered(self):
         assert set(INTEGRATION_IMPLEMENTATIONS.keys()) == {
             "GitHub", "Analyze", "TestRunner", "Dependencies", "WebResearch",
-            "FileManager", "Email", "Calendar",
+            "FileManager", "Email", "Calendar", "Wiki", "Slack",
+            "playwright", "notion", "linear",
         }
 
     def test_schema_format(self):
@@ -80,7 +82,7 @@ class TestRegistry:
 
     def test_get_integration_schemas_all(self):
         schemas = get_integration_schemas()
-        assert len(schemas) == 8
+        assert len(schemas) == 13
 
     def test_get_integration_schemas_filtered(self):
         schemas = get_integration_schemas(["GitHub", "TestRunner"])

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..config import Config
-from . import calendar, codebase, dependencies, email, files, github, testrunner, web
+from . import calendar, codebase, dependencies, email, files, github, linear, notion, playwright, slack, testrunner, web, wiki
 
 # Aggregate all integration tool schemas and implementations
 INTEGRATION_SCHEMAS: dict[str, dict[str, Any]] = {
@@ -17,6 +17,11 @@ INTEGRATION_SCHEMAS: dict[str, dict[str, Any]] = {
     **files.SCHEMAS,
     **email.SCHEMAS,
     **calendar.SCHEMAS,
+    **wiki.SCHEMAS,
+    **slack.SCHEMAS,
+    **playwright.SCHEMAS,
+    **notion.SCHEMAS,
+    **linear.SCHEMAS,
 }
 
 INTEGRATION_IMPLEMENTATIONS: dict[str, Callable[[dict[str, Any], Config], str]] = {
@@ -28,6 +33,11 @@ INTEGRATION_IMPLEMENTATIONS: dict[str, Callable[[dict[str, Any], Config], str]] 
     **files.IMPLEMENTATIONS,
     **email.IMPLEMENTATIONS,
     **calendar.IMPLEMENTATIONS,
+    **wiki.IMPLEMENTATIONS,
+    **slack.IMPLEMENTATIONS,
+    **playwright.IMPLEMENTATIONS,
+    **notion.IMPLEMENTATIONS,
+    **linear.IMPLEMENTATIONS,
 }
 
 

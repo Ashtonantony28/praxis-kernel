@@ -1,0 +1,46 @@
+version: "3.9"
+
+# Two Praxis services sharing one image and one workspace volume.
+#
+# mcp    — MCP HTTP/SSE gateway on port 8765 (foreground, restarts on crash)
+# daemon — queue processor (foreground --queue, restarts on crash)
+#
+# Both services read credentials from .env (copy from .env.example and fill in).
+# NEVER commit .env — it contains secrets.
+#
+# Quick start:
+#   cp .env.example .env
+#   # edit .env: set CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY)
+#   docker compose up -d
+#   # Connect MCP client to: http://localhost:8765/sse
+
+services:
+
+  mcp:
+    build: .
+    command: ["python", "-m", "praxis", "--mcp"]
+    ports:
+      - "8765:8765"
+    volumes:
+      # Named volume: persists workspace state (tasks, wiki, staging, memory)
+      - workspace:/workspace
+      # Optional: uncomment to bind-mount a host directory instead:
+      # - ./workspace:/workspace
+    env_file: .env
+    restart: unless-stopped
+
+  daemon:
+    build: .
+    # Use --queue (foreground) — not --daemon (which forks and exits,
+    # confusing the container process model).
+    command: ["python", "-m", "praxis", "--queue"]
+    volumes:
+      # Same named volume so mcp and daemon share queue / staging / wiki state
+      - workspace:/workspace
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      - mcp
+
+volumes:
+  workspace:
