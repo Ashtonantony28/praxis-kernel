@@ -169,6 +169,19 @@ class OpenAIBaseRuntime(Runtime):
                 )
                 continue
 
+            # Layer 1 enforcement — raises EnforcementError if blocked
+            try:
+                from .enforcement import enforce, EnforcementError
+                enforce(name, args)
+            except EnforcementError as _e:
+                output = f"BLOCKED by §5 escalation boundary: {_e}"
+                results.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": output,
+                })
+                continue
+
             import time as _time
             _t0 = _time.monotonic()
             output = tool_executor(name, args)

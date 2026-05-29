@@ -158,6 +158,19 @@ class ClaudeCodeRuntime(Runtime):
             if getattr(block, "type", None) != "tool_use":
                 continue
 
+            # Layer 1 enforcement — raises EnforcementError if blocked
+            try:
+                from .enforcement import enforce, EnforcementError
+                enforce(block.name, block.input)
+            except EnforcementError as _e:
+                output = f"BLOCKED by §5 escalation boundary: {_e}"
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": output,
+                })
+                continue
+
             _t0 = _time.monotonic()
             output = tool_executor(block.name, block.input)
             _latency_ms = (_time.monotonic() - _t0) * 1000
