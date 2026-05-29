@@ -404,4 +404,4 @@ The `§5 escalation boundary` is the one thing you should never bypass, weaken, 
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE). Users running turing over a network as a service must publish their modifications.
