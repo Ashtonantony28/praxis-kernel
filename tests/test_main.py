@@ -147,18 +147,20 @@ def _mock_main_deps(tmp_path):
 
 
 def test_main_with_argv(_mock_main_deps):
-    """main() joins sys.argv[1:] as the message."""
+    """main() joins sys.argv[1:] as the message and passes an active Mode."""
     from praxis.__main__ import main
+    from unittest.mock import ANY
 
     with patch.object(sys, "argv", ["praxis", "hello", "world"]):
         main()
 
-    _mock_main_deps["orch"].run.assert_called_once_with("hello world")
+    _mock_main_deps["orch"].run.assert_called_once_with("hello world", mode=ANY)
 
 
 def test_main_with_stdin(_mock_main_deps):
-    """main() reads stdin when no args given."""
+    """main() reads stdin when no args given and passes an active Mode."""
     from praxis.__main__ import main
+    from unittest.mock import ANY
 
     with (
         patch.object(sys, "argv", ["praxis"]),
@@ -167,7 +169,7 @@ def test_main_with_stdin(_mock_main_deps):
         mock_stdin.read.return_value = "stdin message"
         main()
 
-    _mock_main_deps["orch"].run.assert_called_once_with("stdin message")
+    _mock_main_deps["orch"].run.assert_called_once_with("stdin message", mode=ANY)
 
 
 def test_main_keyboard_interrupt(_mock_main_deps):

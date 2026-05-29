@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import Config
 from .hooks import run_pretool_hook
@@ -10,6 +10,9 @@ from .integrations import INTEGRATION_IMPLEMENTATIONS, get_integration_schemas
 from .runtime.base import Runtime
 from .subagents import load_subagents
 from .tools import TOOL_IMPLEMENTATIONS, get_tool_schemas
+
+if TYPE_CHECKING:
+    from .modes.base import Mode
 
 
 class Orchestrator:
@@ -36,7 +39,7 @@ class Orchestrator:
         path = self.config.workspace_root / "praxis-system-prompt.md"
         return path.read_text()
 
-    def run(self, user_message: str, model: str | None = None) -> str:
+    def run(self, user_message: str, model: str | None = None, mode: "Mode | None" = None) -> str:
         """Run the orchestrator agent loop with the full system prompt."""
         import os
         model = model or os.environ.get("PRAXIS_MODEL", "claude-sonnet-4-6")
@@ -47,6 +50,7 @@ class Orchestrator:
             user_message=user_message,
             tool_schemas=all_schemas,
             tool_executor=self._execute_with_hook,
+            mode=mode,
         )
 
     def run_subagent(self, name: str, prompt: str) -> str:

@@ -477,14 +477,51 @@ def main() -> None:
             default_runtime, runtime_overrides = _create_runtimes(conv)
             orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides)
 
-            # Filter out the program name, leave only the prompt args
-            args = [a for a in sys.argv[1:] if not a.startswith("--")]
+            # Determine active Mode (plan / build / custom)
+            _mode_name = None
+            _argv_full = sys.argv[1:]
+            if "--plan" in _argv_full:
+                _mode_name = "plan"
+            elif "--mode" in _argv_full:
+                _idx = _argv_full.index("--mode")
+                if _idx + 1 < len(_argv_full):
+                    _mode_name = _argv_full[_idx + 1]
+            if _mode_name is None:
+                import os as _os2
+                _mode_name = _os2.environ.get("PRAXIS_DEFAULT_MODE", "build")
+
+            _active_mode = None
+            try:
+                from .modes import Mode as _Mode
+                _active_mode = _Mode.load(_mode_name)
+                if _mode_name != "build":
+                    sys.stderr.write(f"[praxis] mode: {_mode_name}\n")
+            except (ImportError, ValueError) as _me:
+                sys.stderr.write(f"[praxis] warning: mode '{_mode_name}' not found ({_me}); running in build mode\n")
+
+            # Filter out --plan, --mode <name>, and other flags
+            _skip_next_arg = False
+            args = []
+            for _a in sys.argv[1:]:
+                if _skip_next_arg:
+                    _skip_next_arg = False
+                    continue
+                if _a == "--mode":
+                    _skip_next_arg = True
+                    continue
+                if _a.startswith("--"):
+                    continue
+                args.append(_a)
+
             if args:
                 message = " ".join(args)
             else:
                 message = sys.stdin.read()
 
-            result = orch.run(message)
+            try:
+                result = orch.run(message, mode=_active_mode)
+            except TypeError:
+                result = orch.run(message)
             print(result)
 
         elif mode == "queue":

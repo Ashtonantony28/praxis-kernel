@@ -67,6 +67,19 @@ python -m praxis --config
 
 The config wizard lets you adjust model assignments per subagent (orchestrator, builder, reviewer, scout, scribe), max turns, cost cap, and runtime. It includes named effort presets (Minimal → Max) that set a coordinated combination in one step. Changes are written to `.env` and `convergence.yaml` — no manual file editing required.
 
+```bash
+# Plan mode — presents a plan instead of executing writes
+python -m praxis --plan "refactor the auth module"
+# or equivalently:
+python -m praxis --mode plan "refactor the auth module"
+
+# Set plan mode as your default
+export PRAXIS_DEFAULT_MODE=plan
+
+# Custom modes — define in praxis/modes.yaml
+python -m praxis --mode my-review-mode "review the PR"
+```
+
 After setup:
 ```bash
 source .venv/bin/activate
@@ -158,6 +171,19 @@ Set `PRAXIS_RUNTIME=local` or `PRAXIS_RUNTIME=cloud` to switch. Use `convergence
 - **Operator** — infrastructure: services, deployments, live systems
 
 The orchestrator infers the mode from workspace contents. Each mode adjusts defaults for caution level and verification strategy.
+
+## Plan & Build Modes
+
+Praxis supports runtime-agnostic permission modes that work identically across all three runtimes (Claude OAuth, Cloud, Local Ollama):
+
+- **build** (default): Full tool access. Praxis acts immediately.
+- **plan**: Read-only mode. Write, Edit, Bash, and all integration write actions are denied. Praxis presents a numbered plan for human approval before anything executes.
+
+Use `--plan` or `--mode plan` for a single run; set `PRAXIS_DEFAULT_MODE=plan` to make plan mode the default. Define custom modes in `praxis/modes.yaml`.
+
+Plan mode is enforced at two layers:
+1. Tools denied by the mode are removed from the tool list before the model sees them.
+2. `enforcement.py` blocks any denied tool call as defense-in-depth, even if the model somehow invokes one.
 
 ## Integrations
 

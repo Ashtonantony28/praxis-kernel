@@ -10,10 +10,13 @@ specific error handling and _resolve_model() for model ID mapping.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .base import Runtime, ToolExecutor
 from .cost import CostCircuitBreaker
+
+if TYPE_CHECKING:
+    from praxis.modes.base import Mode
 
 MAX_TURNS = 50
 MAX_CONTEXT_MESSAGES = 40   # trigger compaction above this
@@ -40,6 +43,7 @@ class OpenAIBaseRuntime(Runtime):
         self.default_model = default_model
         self.base_url = base_url
         self._cost_breaker = CostCircuitBreaker.from_env()
+        self._current_mode: "Mode | None" = None
 
     def run_loop(
         self,
@@ -50,12 +54,22 @@ class OpenAIBaseRuntime(Runtime):
         tool_schemas: list[dict[str, Any]],
         tool_executor: ToolExecutor,
         max_turns: int = MAX_TURNS,
+        mode: "Mode | None" = None,
     ) -> str:
+        # Apply mode: filter tools and inject prompt suffix
+        self._current_mode = mode
+        effective_system = system
+        effective_tool_schemas = tool_schemas
+        if mode is not None:
+            effective_tool_schemas = self.apply_mode(mode, tool_schemas)
+            if mode.prompt_suffix:
+                effective_system = system + mode.prompt_suffix
+
         resolved_model = self._resolve_model(model)
-        openai_tools = self._convert_tools(tool_schemas)
+        openai_tools = self._convert_tools(effective_tool_schemas)
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system},
+            {"role": "system", "content": effective_system},
             {"role": "user", "content": user_message},
         ]
 
@@ -129,6 +143,7 @@ class OpenAIBaseRuntime(Runtime):
         tool_schemas: list[dict[str, Any]],
         tool_executor: ToolExecutor,
         max_turns: int = MAX_TURNS,
+        mode: "Mode | None" = None,
     ) -> str:
         return self.run_loop(
             model=model,
@@ -137,6 +152,7 @@ class OpenAIBaseRuntime(Runtime):
             tool_schemas=tool_schemas,
             tool_executor=tool_executor,
             max_turns=max_turns,
+            mode=mode,
         )
 
     def execute_tool(
@@ -172,7 +188,7 @@ class OpenAIBaseRuntime(Runtime):
             # Layer 1 enforcement — raises EnforcementError if blocked
             try:
                 from .enforcement import enforce, EnforcementError
-                enforce(name, args)
+                enforce(name, args, mode=self._current_mode)
             except EnforcementError as _e:
                 output = f"BLOCKED by §5 escalation boundary: {_e}"
                 results.append({

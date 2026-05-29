@@ -15,8 +15,11 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from praxis.modes.base import Mode
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +238,11 @@ def _check_web_research(
 # Public API
 # ---------------------------------------------------------------------------
 
-def enforce(tool_name: str, tool_input: dict[str, Any]) -> None:
+def enforce(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    mode: "Mode | None" = None,
+) -> None:
     """Check a tool call against §5 boundary rules.
 
     Raises EnforcementError(message) if the call is blocked.
@@ -251,6 +258,8 @@ def enforce(tool_name: str, tool_input: dict[str, Any]) -> None:
          commands that would write outside workspace blocked; interpreter
          -c/-e file-write bypass pattern blocked.
       4. WebResearch — same domain check as NETWORK_TOOLS.
+      5. Mode-based tool blocking (defense-in-depth layer 2) — runs after
+         all §5 checks so §5 rules always take precedence.
     """
     workspace_root = _workspace_root()
     allowed_domains = _allowed_domains()
@@ -271,3 +280,10 @@ def enforce(tool_name: str, tool_input: dict[str, Any]) -> None:
 
     if tool_name == "WebResearch":
         _check_web_research(tool_input, allowed_domains)
+
+    # Mode-based tool blocking (defense-in-depth layer 2)
+    # Runs after all §5 boundary checks so §5 rules always take precedence.
+    if mode is not None and tool_name in mode.denied_tools:
+        raise EnforcementError(
+            f"Tool '{tool_name}' is denied in '{mode.name}' mode"
+        )

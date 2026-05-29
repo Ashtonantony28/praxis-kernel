@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from praxis.modes.base import Mode
 
 ToolExecutor = Callable[[str, dict[str, Any]], str]
 
@@ -22,6 +25,20 @@ class Runtime(ABC):
       manage_context — append a message to conversation history
     """
 
+    def apply_mode(
+        self,
+        mode: "Mode",
+        tools: list[dict],
+    ) -> list[dict]:
+        """Filter tool schemas by mode.denied_tools.
+
+        Returns a new list excluding any tool whose 'name' field is in
+        mode.denied_tools. If mode.denied_tools is empty, returns tools unchanged.
+        """
+        if not mode.denied_tools:
+            return tools
+        return [t for t in tools if t.get("name") not in mode.denied_tools]
+
     @abstractmethod
     def run_loop(
         self,
@@ -32,6 +49,7 @@ class Runtime(ABC):
         tool_schemas: list[dict[str, Any]],
         tool_executor: ToolExecutor,
         max_turns: int = 50,
+        mode: "Mode | None" = None,
     ) -> str:
         """Run the full agent conversation loop and return final text output.
 
@@ -44,6 +62,8 @@ class Runtime(ABC):
                            The orchestrator provides this; it handles §5 hook
                            enforcement and Agent-as-subagent routing.
             max_turns: Safety cap on loop iterations.
+            mode: Optional Mode object that filters tools and injects a
+                  prompt suffix when active.
 
         Returns:
             Final text output from the model.

@@ -196,6 +196,12 @@ praxis/                          # Python orchestrator package
   scheduler.py                   # CronScheduler — cron-style task dispatch to TaskQueue; ScheduledTask dataclass; tick() dedup; [scheduler] optional dep (croniter>=1.0)
   __main__.py                    # python -m praxis entrypoint — interactive, --queue, --daemon, --stop, --status, --slack-listen, --mcp, --approve, --list-staged
   setup_wizard.py              # First-run interactive wizard — 10-step setup, writes .env, seeds wiki, schedules briefing
+  modes/                         # Plan/build mode definitions (Phase v2-A)
+    __init__.py                  #   Exports Mode + load_mode()
+    base.py                      #   Mode frozen dataclass + Mode.load()
+    plan.py                      #   Built-in plan mode (read-only; denies Write/Edit/Bash + integration writes)
+    build.py                     #   Built-in build mode (full access, default)
+  modes.yaml                     #   User-overridable mode definitions (YAML; modes: {} by default)
   wiki.py                        # Bitemporal personal wiki — ingest, query, lint (Phase W)
   slack_listener.py                # Slack socket mode listener — routes DMs/slash commands to TaskQueue (Phase S)
   mcp_server.py                    # MCP Gateway — HTTP/SSE server; exposes all Praxis tools as MCP tools (Phase M)
@@ -437,3 +443,17 @@ python -m pytest tests/ -v
   - `convergence.yaml` — `agents:` section only. Uses regex-replace to update existing section or append if absent. Never touches `runtimes:` or `task_types:` sections.
 - CLI: `python -m praxis --config` (no arguments needed). Works alongside `--setup` (setup for first-run, config for ongoing changes).
 - `§5 analysis:` all writes inside WORKSPACE_ROOT ✓; no egress ✓; never touches `.claude/hooks/` or `.claude/settings.json` ✓.
+
+## Mode conventions (Phase v2-A)
+
+- Two built-in modes: `plan` (read-only) and `build` (full access, default).
+- Mode selection: `--mode <name>` or `--plan` (alias for plan) or `PRAXIS_DEFAULT_MODE` env var (default: `build`).
+- `praxis/modes/__init__.py` and `praxis/modes/base.py` — `Mode` frozen dataclass: `name`, `allowed_tools`, `denied_tools`, `prompt_suffix`, `requires_confirmation`, `model_override`.
+- `praxis/modes/plan.py` — 15 denied tools: Write, Edit, Bash, NotebookEdit + notion/linear/email/calendar/wiki/slack write actions; `requires_confirmation=True`.
+- `praxis/modes/build.py` — no restrictions; `requires_confirmation=False`.
+- `praxis/modes.yaml` — user-overridable YAML at `<workspace>/praxis/modes.yaml`. Add a `modes:` section to override built-ins or define custom modes. User definitions take precedence over built-ins.
+- `apply_mode(mode, tools) -> list` — concrete method on `Runtime` base class; filters tool schemas by `mode.denied_tools` before advertising them to the model.
+- Both `ClaudeCodeRuntime` and `OpenAIBaseRuntime` (and `LocalRuntime` via inheritance): accept `mode: Mode | None = None` in `run_loop()`; store as `self._current_mode`; call `apply_mode()` to filter tools; inject `mode.prompt_suffix` into system prompt.
+- Defense-in-depth: `enforce()` in `praxis/runtime/enforcement.py` also checks `mode.denied_tools` — blocks a denied tool call even if the model somehow invokes it after filtering. Mode check runs after all §5 boundary checks (§5 takes precedence).
+- `Orchestrator.run()` accepts `mode: Mode | None = None` and passes it to `runtime.run_loop()`.
+- `python -m praxis --plan "task"` runs in plan mode. `python -m praxis --mode custom-mode "task"` runs with a custom mode defined in `praxis/modes.yaml`.

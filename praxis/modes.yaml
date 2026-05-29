@@ -1,0 +1,40 @@
+# praxis/modes.yaml — user-overridable mode definitions.
+# Overrides are loaded by Mode.load() with precedence over built-in modes.
+#
+# Schema for each mode entry:
+#   name (string): mode identifier used in --mode <name>
+#   denied_tools (list[str]): tool names that cannot be called in this mode
+#   allowed_tools (list[str]): explicit allow-list (empty = all tools allowed except denied)
+#   prompt_suffix (string): appended to system prompt when mode is active
+#   requires_confirmation (bool): whether to confirm before writing
+#   model_override (string, optional): override model for this mode
+#
+# Built-in modes (plan, build) are defined in praxis/modes/plan.py and
+# praxis/modes/build.py. Override them here or define new custom modes.
+#
+# Example — override plan mode to also deny Agent tool:
+# modes:
+#   plan:
+#     denied_tools:
+#       - Write
+#       - Edit
+#       - Bash
+#       - NotebookEdit
+#       - Agent
+#     prompt_suffix: >
+#       You are in plan mode. Describe what you would do but do not execute
+#       any write or destructive actions.
+#     requires_confirmation: true
+#
+# Example — define a custom read-only mode:
+# modes:
+#   read-only:
+#     denied_tools:
+#       - Write
+#       - Edit
+#       - Bash
+#       - NotebookEdit
+#     allowed_tools: []
+#     prompt_suffix: "You may only read files and search. No writes."
+#     requires_confirmation: false
+modes: {}

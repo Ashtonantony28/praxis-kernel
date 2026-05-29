@@ -247,6 +247,7 @@ def _load_current_config(
     if "PRAXIS_MODEL" in env_vals:
         # PRAXIS_MODEL overrides the orchestrator model
         config["orchestrator"] = env_vals["PRAXIS_MODEL"]
+    config["default_mode"] = env_vals.get("PRAXIS_DEFAULT_MODE", "build")
 
     return config
 
@@ -383,6 +384,21 @@ def _menu_preset(config: dict[str, str], _input: Callable | None) -> dict[str, s
     return config
 
 
+def _menu_default_mode(current: str, _input) -> str:
+    """Prompt user to select default mode."""
+    print(f"\nDefault mode (current: {current})")
+    print("  (1) build  — full tool access (default)")
+    print("  (2) plan   — read-only planning mode")
+    choice = _safe_input("Select [1-2]: ", _input).strip()
+    if choice == "2":
+        return "plan"
+    elif choice == "1":
+        return "build"
+    else:
+        print("  Invalid choice; keeping current.")
+        return current
+
+
 # ---------------------------------------------------------------------------
 # Main menu display
 # ---------------------------------------------------------------------------
@@ -419,7 +435,8 @@ def _print_main_menu(config: dict[str, str]) -> None:
         runtime_display = runtime
     print(f"  [8] Runtime: {runtime_display}")
     print(f"  [9] Effort preset: {config['effort_preset']}")
-    print("  [10] Done")
+    print(f"  [10] Default mode: {config['default_mode']}")
+    print("  [11] Done")
     print()
 
 
@@ -454,7 +471,7 @@ def run_config_wizard(
 
     while True:
         _print_main_menu(config)
-        choice = _safe_input("Select option [1-10]: ", _input).strip()
+        choice = _safe_input("Select option [1-11]: ", _input).strip()
 
         # Model items 1–5
         if choice in ("1", "2", "3", "4", "5"):
@@ -474,12 +491,15 @@ def run_config_wizard(
             config = _menu_preset(config, _input)
 
         elif choice == "10":
+            config["default_mode"] = _menu_default_mode(config["default_mode"], _input)
+
+        elif choice == "11":
             # Save and exit
             _save_config(workspace_root, env_file, yaml_file, config)
             break
 
         else:
-            print("  Invalid option. Please enter a number between 1 and 10.")
+            print("  Invalid option. Please enter a number between 1 and 11.")
 
 
 def _save_config(
@@ -495,6 +515,7 @@ def _save_config(
         "PRAXIS_MAX_SESSION_COST":  config["cost_cap"],
         "PRAXIS_MAX_TURNS":         config["max_turns"],
         "PRAXIS_EFFORT_PRESET":     config["effort_preset"],
+        "PRAXIS_DEFAULT_MODE":      config["default_mode"],
     }
     try:
         _update_env(env_file, env_updates)

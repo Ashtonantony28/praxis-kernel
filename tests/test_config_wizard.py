@@ -193,9 +193,9 @@ def test_write_convergence_agents_replaces_section(tmp_path):
 # ===========================================================================
 
 def test_model_selection_updates_config(tmp_path):
-    """Simulate user picking [1] orchestrator, then model 2 (sonnet), then [10] done."""
+    """Simulate user picking [1] orchestrator, then model 2 (sonnet), then [11] done."""
     # Model 2 is claude-sonnet-4-6
-    inp = make_input("1", "2", "10")
+    inp = make_input("1", "2", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     yaml_file = tmp_path / "convergence.yaml"
@@ -205,8 +205,8 @@ def test_model_selection_updates_config(tmp_path):
 
 
 def test_max_turns_selection(tmp_path):
-    """Simulate [6], enter '120', then [10]. Verify PRAXIS_MAX_TURNS=120 in .env."""
-    inp = make_input("6", "120", "10")
+    """Simulate [6], enter '120', then [11]. Verify PRAXIS_MAX_TURNS=120 in .env."""
+    inp = make_input("6", "120", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     env = _read_env(tmp_path / ".env")
@@ -214,8 +214,8 @@ def test_max_turns_selection(tmp_path):
 
 
 def test_max_turns_invalid_then_valid(tmp_path):
-    """Simulate [6], enter '999' (too large), then '50', then [10]. Verify 50 written."""
-    inp = make_input("6", "999", "50", "10")
+    """Simulate [6], enter '999' (too large), then '50', then [11]. Verify 50 written."""
+    inp = make_input("6", "999", "50", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     env = _read_env(tmp_path / ".env")
@@ -223,8 +223,8 @@ def test_max_turns_invalid_then_valid(tmp_path):
 
 
 def test_cost_cap_selection(tmp_path):
-    """Simulate [7], enter '5.50', then [10]. Verify PRAXIS_MAX_SESSION_COST=5.50 in .env."""
-    inp = make_input("7", "5.50", "10")
+    """Simulate [7], enter '5.50', then [11]. Verify PRAXIS_MAX_SESSION_COST=5.50 in .env."""
+    inp = make_input("7", "5.50", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     env = _read_env(tmp_path / ".env")
@@ -232,8 +232,8 @@ def test_cost_cap_selection(tmp_path):
 
 
 def test_runtime_selection(tmp_path):
-    """Simulate [8], select '2' (cloud), then [10]. Verify PRAXIS_RUNTIME=cloud in .env."""
-    inp = make_input("8", "2", "10")
+    """Simulate [8], select '2' (cloud), then [11]. Verify PRAXIS_RUNTIME=cloud in .env."""
+    inp = make_input("8", "2", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     env = _read_env(tmp_path / ".env")
@@ -250,7 +250,7 @@ def test_effort_preset_medium_applies_all_fields(tmp_path):
     Verify all models set to sonnet, max_turns=80, cost_cap=5.00 in output files.
     """
     # Preset order: 1=minimal, 2=low, 3=medium
-    inp = make_input("9", "3", "y", "10")
+    inp = make_input("9", "3", "y", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     env = _read_env(tmp_path / ".env")
@@ -270,7 +270,7 @@ def test_effort_preset_high_diff_shows_changes(tmp_path, capsys):
     Confirm the confirmation actually ran (check file contents).
     """
     # Preset order: 4=high
-    inp = make_input("9", "4", "y", "10")
+    inp = make_input("9", "4", "y", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     env = _read_env(tmp_path / ".env")
@@ -294,7 +294,7 @@ def test_effort_preset_abort_with_n(tmp_path):
     Verify the original settings are NOT replaced (model is still the default, not haiku).
     """
     # Preset order: 1=minimal (all haiku)
-    inp = make_input("9", "1", "n", "10")
+    inp = make_input("9", "1", "n", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     yaml_file = tmp_path / "convergence.yaml"
@@ -308,7 +308,7 @@ def test_effort_preset_abort_with_n(tmp_path):
 def test_effort_preset_custom_noop(tmp_path):
     """Simulate [9], select '6' (custom), then [10]. Verify nothing changed from defaults."""
     # Preset order has 5 named presets; index 6 = custom (no change)
-    inp = make_input("9", "6", "10")
+    inp = make_input("9", "6", "11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     env = _read_env(tmp_path / ".env")
@@ -332,7 +332,7 @@ def test_merge_mode_never_overwrites_unrelated_keys(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text("FOO=bar\n", encoding="utf-8")
 
-    inp = make_input("8", "2", "10")  # choose cloud runtime, then done
+    inp = make_input("8", "2", "11")  # choose cloud runtime, then done
     run_config_wizard(tmp_path, env_file=env_file, _input=inp)
 
     result = _read_env(env_file)
@@ -345,8 +345,8 @@ def test_merge_mode_never_overwrites_unrelated_keys(tmp_path):
 # ===========================================================================
 
 def test_convergence_yaml_agents_section_written_correctly(tmp_path):
-    """After [10] done, read convergence.yaml and verify agents: section formatting."""
-    inp = make_input("10")
+    """After [11] done, read convergence.yaml and verify agents: section formatting."""
+    inp = make_input("11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     yaml_file = tmp_path / "convergence.yaml"
@@ -370,8 +370,8 @@ def test_convergence_yaml_agents_section_written_correctly(tmp_path):
 # ===========================================================================
 
 def test_invalid_main_menu_option(tmp_path):
-    """Enter '99' (invalid), then '10' (done). Verify it doesn't crash."""
-    inp = make_input("99", "10")
+    """Enter '99' (invalid), then '11' (done). Verify it doesn't crash."""
+    inp = make_input("99", "11")
     # Should not raise
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
@@ -397,8 +397,8 @@ def test_presets_all_valid_keys():
 # ===========================================================================
 
 def test_print_summary_after_done(tmp_path, capsys):
-    """After selecting [10], captured output contains 'Configuration saved.' and 'Effective configuration:'."""
-    inp = make_input("10")
+    """After selecting [11], captured output contains 'Configuration saved.' and 'Effective configuration:'."""
+    inp = make_input("11")
     run_config_wizard(tmp_path, env_file=tmp_path / ".env", _input=inp)
 
     out = capsys.readouterr().out

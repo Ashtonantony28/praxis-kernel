@@ -114,7 +114,7 @@ def run_wizard(
     # STEP 1 — Runtime selection
     # -----------------------------------------------------------------------
     try:
-        print("STEP 1/10 — Runtime")
+        print("STEP 1/11 — Runtime")
         print("Which runtime would you like to use?")
         print()
         print("  (1) Claude subscription OAuth     [flat cost, recommended]")
@@ -189,7 +189,7 @@ def run_wizard(
     # STEP 2 — Workspace confirmation
     # -----------------------------------------------------------------------
     try:
-        print("STEP 2/10 — Workspace")
+        print("STEP 2/11 — Workspace")
         print(f"Detected workspace root: {workspace_root}")
         ws_choice = _safe_input("Is this correct? [Y/n]: ", _input).strip().lower()
         if ws_choice == "n":
@@ -211,7 +211,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     slack_enabled = False
     try:
-        print("STEP 3/10 — Slack (optional)")
+        print("STEP 3/11 — Slack (optional)")
         print("Slack integration enables: notifications, phone control, remote approvals.")
         print("To set up, create a Slack app at https://api.slack.com/apps with:")
         print("  - Socket Mode enabled")
@@ -252,7 +252,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     github_enabled = False
     try:
-        print("STEP 4/10 — GitHub (optional)")
+        print("STEP 4/11 — GitHub (optional)")
         print("GitHub integration enables: PR listing, issue viewing, code diffs.")
         print("Create a Personal Access Token at: https://github.com/settings/tokens")
         print("  - Scopes: repo (for private repos) or public_repo (for public)")
@@ -273,7 +273,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     web_enabled = False
     try:
-        print("STEP 5/10 — Web search (optional)")
+        print("STEP 5/11 — Web search (optional)")
         print("Web search uses the Brave Search API (free tier — no credit card required).")
         print("Sign up at: https://brave.com/search/api/")
         print("  - Free tier: 2000 queries/month")
@@ -307,7 +307,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     email_enabled = False
     try:
-        print("STEP 6/10 — Email (optional)")
+        print("STEP 6/11 — Email (optional)")
         print("Email integration provides read-only IMAP inbox access + local draft staging.")
         print("For Gmail: create an App Password at https://myaccount.google.com/apppasswords")
         print("  (requires 2-factor authentication)")
@@ -336,7 +336,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     cost_cap = "2.00"
     try:
-        print("STEP 7/10 — Cost circuit breaker")
+        print("STEP 7/11 — Cost circuit breaker")
         print("Praxis will stop a session if estimated API cost exceeds this limit.")
         print("(For OAuth/subscription users, this is an estimate — no actual billing impact.)")
         print()
@@ -357,7 +357,7 @@ def run_wizard(
     briefing_task_id: str | None = None
     briefing_next_run: str | None = None
     try:
-        print("STEP 8/10 — Morning briefing (optional)")
+        print("STEP 8/11 — Morning briefing (optional)")
         print("A daily 7am briefing asks: 'wiki query: what are my priorities for today?'")
         print("Requires: pip install praxis[scheduler]")
         print()
@@ -398,7 +398,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     wiki_copied = 0
     try:
-        print("STEP 9/10 — Personal wiki seed (optional)")
+        print("STEP 9/11 — Personal wiki seed (optional)")
         print("Drop notes or documents into wiki/raw/ to seed your personal knowledge wiki.")
         print("Praxis will ingest them when you run: python -m praxis \"wiki ingest wiki/raw/\"")
         print()
@@ -437,7 +437,32 @@ def run_wizard(
     print()
 
     # -----------------------------------------------------------------------
-    # STEP 10 — Write .env and print summary
+    # STEP 10 — Default mode
+    # -----------------------------------------------------------------------
+    try:
+        print("STEP 10/11 — Default mode")
+        print("Which mode should Praxis use by default?")
+        print()
+        print("  (1) build  [full access — default]")
+        print("      All tools available. Praxis acts immediately.")
+        print()
+        print("  (2) plan   [read-only planning mode]")
+        print("      Write/Edit/Bash denied. Praxis presents a plan for approval.")
+        print()
+        mode_choice = _safe_input("Enter choice [1-2] (default: 1): ", _input).strip()
+        if mode_choice == "2":
+            env_data["PRAXIS_DEFAULT_MODE"] = "plan"
+        else:
+            env_data["PRAXIS_DEFAULT_MODE"] = "build"
+        print(f"  Default mode: {env_data['PRAXIS_DEFAULT_MODE']}")
+        print()
+    except (EOFError, KeyboardInterrupt):
+        env_data["PRAXIS_DEFAULT_MODE"] = "build"
+        print("\n  (skipped — using build mode)")
+        print()
+
+    # -----------------------------------------------------------------------
+    # STEP 11/11 — Write .env and print summary
     # -----------------------------------------------------------------------
     try:
         _write_env(env_file, env_data, _env_mode)
@@ -480,6 +505,7 @@ def run_wizard(
     print(f"  Cost cap:   {cost_display}")
     print(f"  Briefing:   {briefing_display}")
     print(f"  Wiki seed:  {wiki_display}")
+    print(f"  Default mode:        {env_data.get('PRAXIS_DEFAULT_MODE', 'build')}")
     print()
     print("Next steps:")
     print("  source .venv/bin/activate           # if you have a venv")
