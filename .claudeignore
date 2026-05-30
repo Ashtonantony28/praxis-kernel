@@ -1,0 +1,53 @@
+# Build outputs and caches
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# VCS and tooling
+.git/
+.idea/
+.vscode/
+
+# Lockfiles and logs (rarely needed by an agent)
+*.lock
+*.log
+*.tmp
+
+# Coverage and test artifacts
+.coverage
+coverage/
+.pytest_cache/
+htmlcov/
+
+# Local env and credentials
+.env
+.env.*
+~/.claude/
+
+# Personal data directories (gitignored — agents should not read these)
+wiki/raw/
+wiki/pages/
+wiki/graph.json
+wiki/index.md
+wiki/log.md
+.praxis/memory/
+.praxis/staging/
+.praxis/queue/
+.praxis/logs/
+.praxis/security/
+.praxis/schedule/
+
+# Orchestrator scratch/results dir
+.orchestrate/
+
+# Generated shims (source of truth is praxis/agents/*.yaml)
+.claude/agents/
+
+# Node / npm (not part of this Python project)
+node_modules/

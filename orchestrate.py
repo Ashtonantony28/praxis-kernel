@@ -12,10 +12,10 @@ from claude_agent_sdk import (
 )
 
 # ── PROFILE: Governed (hard regulations found — §5, control-plane, OAuth) ────
-PERMISSION_MODE        = "bypassPermissions"   # Governed: edit but gate risky actions.
-AUTO_LOOP              = True           # Governed: one cycle then stop for review.
+PERMISSION_MODE        = "acceptEdits"   # Governed: edit but gate risky actions.
+AUTO_LOOP              = False           # Governed: one cycle then stop for review.
 MAX_TURNS              = 40             # Hard cap per orchestrator cycle.
-ALLOW_FANOUT           = True          # Governed: Task subagents only — claude -p
+ALLOW_FANOUT           = False          # Governed: Task subagents only — claude -p
                                         # fan-out is harder to gate per-action.
 FANOUT_CONCURRENCY     = 3             # Max parallel claude -p processes (unused when
                                         # ALLOW_FANOUT=False but kept for future).
