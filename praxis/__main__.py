@@ -211,6 +211,27 @@ def _run_list_staged(workspace_root: "Path") -> None:
             if len(wiki_pending) > 5:
                 print(f"  ... and {len(wiki_pending) - 5} more")
 
+    # 7. Staged plan approvals
+    plans_dir = staging / "plans"
+    if plans_dir.exists():
+        plan_files = list(plans_dir.glob("*.json"))
+        pending_plans = []
+        for pf in plan_files:
+            try:
+                entry = _json.loads(pf.read_text(encoding="utf-8"))
+                if entry.get("status") == "pending":
+                    pending_plans.append(entry)
+            except Exception:
+                pass
+        if pending_plans:
+            found_any = True
+            print(f"\nPending plan approvals: {len(pending_plans)}")
+            for e in pending_plans[:5]:
+                task_summary = e.get("task", "?")[:60]
+                print(f"  [{e.get('id','?')[:8]}...] {task_summary}  created={e.get('created_at','?')[:19]}")
+            if len(pending_plans) > 5:
+                print(f"  ... and {len(pending_plans) - 5} more")
+
     if not found_any:
         print("No staged items.")
 
@@ -363,6 +384,15 @@ def _linear_execute(action: str, params: dict, api_key: str) -> str:
         return f"linear execute failed: {exc}"
 
 
+def _run_generate_shims(workspace_root: "Path") -> None:
+    """Regenerate .claude/agents/*.md from praxis/agents/*.yaml at startup."""
+    try:
+        from .runtime.claude_code import generate_agent_shims
+        generate_agent_shims(workspace_root)
+    except Exception:
+        pass  # never block startup
+
+
 def _run_credential_check(workspace_root: "Path") -> None:
     """Check credential status at startup — never blocks execution."""
     import sys as _sys
@@ -463,6 +493,12 @@ def _parse_mode(argv: list[str]) -> str:
         return "setup"
     if "--config" in argv:
         return "config"
+    if "--list-plans" in argv:
+        return "list_plans"
+    if "--approve-plan" in argv:
+        return "approve_plan"
+    if "--reject-plan" in argv:
+        return "reject_plan"
     return "interactive"
 
 
@@ -473,9 +509,10 @@ def main() -> None:
         if mode == "interactive":
             config = Config.from_env()
             _run_credential_check(config.workspace_root)
+            _run_generate_shims(config.workspace_root)
             conv = ConvergenceConfig.load(config.workspace_root)
             default_runtime, runtime_overrides = _create_runtimes(conv)
-            orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides)
+            orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides, agent_modes=conv.agent_modes)
 
             # Determine active Mode (plan / build / custom)
             _mode_name = None
@@ -529,6 +566,7 @@ def main() -> None:
 
             config = Config.from_env()
             _run_credential_check(config.workspace_root)
+            _run_generate_shims(config.workspace_root)
             run_queue_loop(config.workspace_root)
 
         elif mode == "daemon":
@@ -536,6 +574,7 @@ def main() -> None:
 
             config = Config.from_env()
             _run_credential_check(config.workspace_root)
+            _run_generate_shims(config.workspace_root)
             start_daemon(config.workspace_root)
 
         elif mode == "stop":
@@ -588,6 +627,7 @@ def main() -> None:
             except ImportError as exc:
                 raise SystemExit(str(exc))
             config = Config.from_env()
+            _run_generate_shims(config.workspace_root)
             port = int(_os.environ.get("PRAXIS_MCP_PORT", "8765"))
             server = MCPServer(config)
             server.start(port=port)
@@ -810,6 +850,96 @@ def main() -> None:
             workspace_root = _Path(_os.environ.get("PRAXIS_WORKSPACE_ROOT", _os.getcwd()))
             env_file = workspace_root / ".env"
             run_config_wizard(workspace_root, env_file=env_file)
+
+        elif mode == "list_plans":
+            import json as _json
+            from pathlib import Path as _Path
+            import os as _os
+
+            workspace_root = _Path(_os.environ.get("PRAXIS_WORKSPACE_ROOT", _os.getcwd()))
+            plans_dir = workspace_root / ".praxis" / "staging" / "plans"
+            if not plans_dir.exists():
+                print("No pending plans.")
+            else:
+                pending = []
+                for pf in sorted(plans_dir.glob("*.json")):
+                    try:
+                        entry = _json.loads(pf.read_text(encoding="utf-8"))
+                        if entry.get("status") == "pending":
+                            pending.append(entry)
+                    except Exception:
+                        pass
+                if not pending:
+                    print("No pending plans.")
+                else:
+                    print(f"{'ID':<36}  {'Task (first 60 chars)':<60}  {'Created At'}")
+                    print("-" * 110)
+                    for e in pending:
+                        plan_id = e.get("id", "?")
+                        task_summary = e.get("task", "?")[:60]
+                        created_at = e.get("created_at", "?")[:19]
+                        print(f"{plan_id:<36}  {task_summary:<60}  {created_at}")
+
+        elif mode == "approve_plan":
+            import json as _json
+            from pathlib import Path as _Path
+            import os as _os
+
+            # Get plan ID from argv
+            try:
+                idx = sys.argv.index("--approve-plan")
+                plan_id = sys.argv[idx + 1]
+            except (ValueError, IndexError):
+                print("Usage: python -m praxis --approve-plan <id>", file=sys.stderr)
+                raise SystemExit(1)
+
+            workspace_root = _Path(_os.environ.get("PRAXIS_WORKSPACE_ROOT", _os.getcwd()))
+            plan_file = workspace_root / ".praxis" / "staging" / "plans" / f"{plan_id}.json"
+            if not plan_file.exists():
+                print(f"Error: plan '{plan_id}' not found.", file=sys.stderr)
+                raise SystemExit(1)
+
+            entry = _json.loads(plan_file.read_text(encoding="utf-8"))
+            entry["status"] = "approved"
+            plan_file.write_text(_json.dumps(entry, indent=2), encoding="utf-8")
+
+            print(f"Approved plan {plan_id}. Re-running in build mode...")
+
+            # Set up orchestrator and run task in build mode
+            config = Config.from_env()
+            _run_credential_check(config.workspace_root)
+            conv = ConvergenceConfig.load(config.workspace_root)
+            default_runtime, runtime_overrides = _create_runtimes(conv)
+            orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides, agent_modes=conv.agent_modes)
+
+            from .modes import Mode as _Mode
+            build_mode = _Mode.load("build")
+            result = orch.run(entry["task"], mode=build_mode)
+            print(result)
+
+        elif mode == "reject_plan":
+            import json as _json
+            from pathlib import Path as _Path
+            import os as _os
+
+            # Get plan ID from argv
+            try:
+                idx = sys.argv.index("--reject-plan")
+                plan_id = sys.argv[idx + 1]
+            except (ValueError, IndexError):
+                print("Usage: python -m praxis --reject-plan <id>", file=sys.stderr)
+                raise SystemExit(1)
+
+            workspace_root = _Path(_os.environ.get("PRAXIS_WORKSPACE_ROOT", _os.getcwd()))
+            plan_file = workspace_root / ".praxis" / "staging" / "plans" / f"{plan_id}.json"
+            if not plan_file.exists():
+                print(f"Error: plan '{plan_id}' not found.", file=sys.stderr)
+                raise SystemExit(1)
+
+            entry = _json.loads(plan_file.read_text(encoding="utf-8"))
+            entry["status"] = "rejected"
+            plan_file.write_text(_json.dumps(entry, indent=2), encoding="utf-8")
+            print(f"Plan {plan_id} rejected.")
 
     except KeyboardInterrupt:
         sys.stderr.write("\n[praxis] interrupted.\n")

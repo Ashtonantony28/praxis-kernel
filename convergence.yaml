@@ -8,6 +8,19 @@ runtimes:
   #   scout: cloud
   #   scribe: local
 
+# Per-subagent mode overrides (uncomment to activate):
+# agents:
+#   scout:
+#     mode: plan
+#   planner:
+#     mode: plan
+#   verifier:
+#     mode: plan
+#   builder:
+#     mode: build
+#   scribe:
+#     mode: plan
+
 # Task-type routing: maps detected task types to runtimes.
 # detect_task_type() infers type from queue task prompts via keyword matching.
 # Supported task types: audit, implement, review, scribe, default

@@ -324,3 +324,56 @@ class ClaudeCodeRuntime(Runtime):
             if getattr(block, "type", None) == "text"
         ]
         return "\n".join(parts) if parts else ""
+
+
+def _first_nonempty_line(text: str) -> str:
+    """Return the first non-empty, non-markdown-heading line (for description field)."""
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and not line.startswith("You are"):
+            return line[:120]
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            return line[:120]
+    return ""
+
+
+def generate_agent_shims(workspace_root: "Any") -> None:
+    """Generate .claude/agents/*.md from praxis/agents/*.yaml.
+
+    This is infrastructure code — writes using Python file I/O (not LLM tool calls).
+    The hook only fires for LLM tool calls; this function bypasses it intentionally
+    because it is generating derived output, not authoring new content.
+    Called once at startup to keep .claude/agents/ in sync with praxis/agents/ source.
+    """
+    try:
+        from praxis.agents.loader import load_all as _load_all
+    except ImportError:
+        return  # praxis/agents/ not yet populated — skip silently
+
+    try:
+        from pathlib import Path as _Path
+        agents_dir = _Path(workspace_root) / ".claude" / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+
+        agent_defs = _load_all()
+        for agent_def in agent_defs:
+            tools_str = ", ".join(agent_def.tools)
+            # Reconstruct the .md format with frontmatter
+            content = (
+                f"---\n"
+                f"name: {agent_def.name}\n"
+                f"description: {_first_nonempty_line(agent_def.prompt)}\n"
+                f"tools: {tools_str}\n"
+                f"model: {agent_def.model_alias or agent_def.model}\n"
+                f"mode: {agent_def.mode}\n"
+                f"---\n\n"
+                f"{agent_def.prompt.strip()}\n"
+            )
+            shim_path = agents_dir / f"{agent_def.name}.md"
+            shim_path.write_text(content, encoding="utf-8")
+
+        sys.stderr.write(f"[praxis] generated {len(agent_defs)} agent shims in .claude/agents/\n")
+    except Exception as exc:
+        sys.stderr.write(f"[praxis] warning: could not generate agent shims: {exc}\n")

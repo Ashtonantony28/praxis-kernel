@@ -78,6 +78,11 @@ export PRAXIS_DEFAULT_MODE=plan
 
 # Custom modes — define in praxis/modes.yaml
 python -m praxis --mode my-review-mode "review the PR"
+
+# List and approve staged plans
+python -m praxis --list-plans
+python -m praxis --approve-plan <uuid>   # re-runs task in build mode
+python -m praxis --reject-plan <uuid>    # discard
 ```
 
 After setup:
@@ -163,6 +168,22 @@ python -m praxis "hello"
 | `cloud` | OpenAI, Gemini, OpenRouter, Groq | `PRAXIS_CLOUD_API_KEY` + `PRAXIS_CLOUD_BASE_URL` |
 
 Set `PRAXIS_RUNTIME=local` or `PRAXIS_RUNTIME=cloud` to switch. Use `convergence.yaml` to route different subagents to different runtimes.
+
+### Subagent definitions (cross-runtime)
+
+Subagent definitions live in `praxis/agents/*.yaml` — the source of truth for all three runtimes.
+`.claude/agents/` contains generated shim files for Claude Code SDK discovery (auto-regenerated at startup; do not edit).
+
+Each YAML definition specifies: name, model (alias or full ID), mode (plan|build), prompt, tools, background.
+
+- `ClaudeCodeRuntime` — uses `.claude/agents/` shims (generated from YAML at startup)
+- `OpenAICloudRuntime` / `LocalRuntime` — use YAML definitions directly via `load(name)` — no `.claude/` required
+
+**Plan approval flow:**
+When running in plan mode (`--plan` or `--mode plan`), the orchestrator stages the plan to `.praxis/staging/plans/` for human review before execution.
+- `python -m praxis --list-plans` — show pending staged plans
+- `python -m praxis --approve-plan <id>` — re-run in build mode
+- `python -m praxis --reject-plan <id>` — discard plan
 
 ### Three Operating Modes
 

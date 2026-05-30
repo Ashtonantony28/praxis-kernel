@@ -1,6 +1,28 @@
-# Praxis TASKS.md — Phase v2-A: Plan/Build Modes
+# Praxis TASKS.md — Phase v2-B/C/D: Plan Approval + Per-agent Modes + Native Agents
 
-## Phase v2-A: Runtime-agnostic permission abstraction (current)
+## Phase v2-B: Plan approval flow
+
+- [x] V2B-01: Plan staging — when Orchestrator.run() completes in plan mode (mode.requires_confirmation=True), write .praxis/staging/plans/{uuid4}.json with keys: id, task, plan_text, created_at (ISO8601), status="pending". Create dir if absent. — deps: V2A-04
+- [x] V2B-02: CLI commands — add to praxis/__main__.py: --list-plans (show pending staged plans), --approve-plan <id> (re-run original task in build mode, mark approved), --reject-plan <id> (mark rejected, no execution); extend --list-staged section 7 to scan plans/. — deps: V2B-01
+- [x] V2B-03: Tests — tests/test_plan_approval.py: plan mode writes staging file on completion, --list-plans shows pending, --approve-plan re-runs in build mode, --reject-plan marks rejected without executing; 874 existing tests must still pass. — deps: V2B-01, V2B-02
+
+## Phase v2-C: Per-subagent mode routing
+
+- [x] V2C-01: Add mode field to subagent definitions — superseded by V2D-04: shim generator writes .claude/agents/*.md from praxis/agents/*.yaml (which carry mode: fields) at session start. — deps: V2A-01
+- [x] V2C-02: Add mode to convergence.yaml agents section — per-agent mode override key under agents:; lets users change subagent modes without editing .md files. — deps: V2C-01
+- [x] V2C-03: Wire into orchestrator — when spawning a subagent, apply subagent's declared mode regardless of session mode; if session is build but Scout's def says plan, Scout runs plan. — deps: V2C-01, V2C-02, V2A-04
+- [x] V2C-04: Tests — Scout spawned in build session uses plan mode; Builder spawned in plan session uses build mode (surface warning not silent fail); 874+v2B tests must still pass. — deps: V2C-01, V2C-02, V2C-03
+
+## Phase v2-D: Native subagent definitions (cross-runtime)
+
+- [x] V2D-01: praxis/agents/ YAML definitions — create praxis/agents/ dir with scout.yaml, planner.yaml, builder.yaml, verifier.yaml, scribe.yaml. Schema per file: name, model (role alias), mode (plan|build), prompt (full system prompt), tools (list[str]), background (bool). — deps: V2C-01
+- [x] V2D-02: praxis/agents/loader.py — load(name)->AgentDefinition dataclass, load_all()->list[AgentDefinition]; reads from praxis/agents/*.yaml; validates schema, raises clearly on malformed. — deps: V2D-01
+- [x] V2D-03: Update all three runtimes — each runtime's spawn_subagent(agent_def, prompt) accepts AgentDefinition loaded from praxis/agents/ rather than assuming .claude/agents/ discovery. — deps: V2D-02, V2C-03
+- [x] V2D-04: Generated .claude/agents/ shim — on session start ClaudeCodeRuntime writes .claude/agents/*.md from praxis/agents/*.yaml (keeps SDK discovery working); add .claude/agents/ to .gitignore (it is now generated output). — deps: V2D-03
+- [x] V2D-05: Cross-runtime parametrized tests — tests/test_subagent_agnostic.py parametrized over all 3 runtimes: AgentDefinition loads from YAML, spawn_subagent works on ClaudeCodeRuntime (via shim), CloudRuntime (direct), LocalRuntime (direct), all 5 agents discoverable on all 3 runtimes. — deps: V2D-01, V2D-02, V2D-03, V2D-04
+- [x] V2D-06: Scribe pass — CLAUDE.md: praxis/agents/ is source of truth, .claude/agents/ is generated; README.md: subagent system works across all three runtimes; .praxis/memory/morning-handoff.md: v2 completion status. — deps: V2D-05
+
+## Phase v2-A: Runtime-agnostic permission abstraction (complete)
 
 - [x] V2A-01: praxis/modes/__init__.py + praxis/modes/base.py — Mode dataclass + Mode.load() — deps: none
 - [x] V2A-02: praxis/modes/plan.py + praxis/modes/build.py — built-in mode defs — deps: V2A-01

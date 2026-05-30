@@ -56,6 +56,7 @@ class ConvergenceConfig:
     cloud_base_url: str = "https://api.openai.com/v1"
     cloud_model: str = "gpt-4o"
     task_type_rules: dict[str, TaskTypeRule] = field(default_factory=dict)
+    agent_modes: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, workspace_root: Path) -> "ConvergenceConfig":
@@ -138,6 +139,13 @@ class ConvergenceConfig:
                 model=rule_data.get("model"),
             )
 
+        # Per-subagent mode overrides
+        agents_section = data.get("agents", {}) or {}
+        agent_modes: dict[str, str] = {}
+        for agent_name, agent_data in agents_section.items():
+            if isinstance(agent_data, dict) and "mode" in agent_data:
+                agent_modes[agent_name] = str(agent_data["mode"])
+
         return cls(
             default_runtime=default_runtime,
             overrides=overrides,
@@ -146,6 +154,7 @@ class ConvergenceConfig:
             cloud_base_url=cloud_base_url,
             cloud_model=cloud_model,
             task_type_rules=task_type_rules,
+            agent_modes=agent_modes,
         )
 
     def needs_local(self) -> bool:
@@ -199,3 +208,7 @@ class ConvergenceConfig:
         if default_rule and default_rule.model:
             return default_rule.model
         return None
+
+    def mode_for(self, agent_name: str) -> str | None:
+        """Return mode override for a subagent from convergence.yaml, or None."""
+        return self.agent_modes.get(agent_name)

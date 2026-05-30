@@ -47,5 +47,10 @@ wiki/log.md
 
 # Claude Code local settings override
 .claude/settings.local.json
+
+# Generated agent shim files (source of truth is praxis/agents/*.yaml)
+# NOTE: existing tracked .claude/agents/*.md files remain in git history until
+# a human runs: git rm --cached .claude/agents/*.md
+.claude/agents/
 STATUS.md
 =1.0
