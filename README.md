@@ -129,6 +129,74 @@ Praxis maintains a bitemporal personal wiki in `wiki/pages/` — every fact carr
 
 ---
 
+## Phase H — Persona, Proactive Triggers, and Telegram
+
+### SOUL.md persona layer
+
+Praxis can load a personal identity document at session start, prepending it to the orchestrator context (after the §5 governance block). This shapes voice, values, and working style without weakening the security boundary.
+
+**Setup:**
+```bash
+cp wiki/SOUL.md .praxis/SOUL.md
+# Edit .praxis/SOUL.md — add your name, preferred tone, values, recurring context
+```
+
+`.praxis/SOUL.md` is gitignored and never logged.
+
+### HEARTBEAT.md proactive triggers
+
+The scheduler reads `.praxis/HEARTBEAT.md` and fires matching sections as low-priority Tasks based on day-of-week and time-of-day — no cron required. Each H2 section with a `when:` line becomes a recurring trigger.
+
+**Setup:**
+```bash
+cp wiki/HEARTBEAT.md .praxis/HEARTBEAT.md
+# Edit .praxis/HEARTBEAT.md — adjust the when: lines and prompt bodies
+```
+
+Example `when:` syntax inside `.praxis/HEARTBEAT.md`:
+
+```markdown
+## Morning standup
+when: weekdays 07:00-09:00
+
+What's on my plate today? Check Linear for assigned issues.
+```
+
+Configure the check interval (default 30 min):
+```bash
+# In .env:
+PRAXIS_HEARTBEAT_INTERVAL_MINUTES=30
+```
+
+### Telegram adapter
+
+Inbound Telegram messages are enqueued as Tasks. Replies are **staged by default** (written to `.praxis/staging/telegram/replies/`) — never sent autonomously unless you configure the autonomy gate in `convergence.yaml`.
+
+**Setup:**
+```bash
+pip install -e ".[telegram]"
+```
+
+Add to `.env`:
+```bash
+TELEGRAM_BOT_TOKEN=your-bot-token-here   # from BotFather: https://t.me/BotFather
+```
+
+Configure `convergence.yaml` (already scaffolded by H03):
+```yaml
+channels:
+  telegram:
+    autonomy: staged          # or "autonomous" to allow direct replies
+    trusted_contacts: []      # add your Telegram user_id(s) here
+    max_autonomous_reply_words: 50
+```
+
+Add `api.telegram.org` to `PRAXIS_ALLOWED_DOMAINS` in `.env`.
+
+The autonomy gate only sends directly when: `autonomy=autonomous` AND sender is in `trusted_contacts` AND reply is within the word limit. Otherwise the reply is staged for your approval.
+
+---
+
 ## Tests
 
 ```bash

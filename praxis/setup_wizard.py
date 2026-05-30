@@ -114,7 +114,7 @@ def run_wizard(
     # STEP 1 — Runtime selection
     # -----------------------------------------------------------------------
     try:
-        print("STEP 1/11 — Runtime")
+        print("STEP 1/12 — Runtime")
         print("Which runtime would you like to use?")
         print()
         print("  (1) Claude subscription OAuth     [flat cost, recommended]")
@@ -189,7 +189,7 @@ def run_wizard(
     # STEP 2 — Workspace confirmation
     # -----------------------------------------------------------------------
     try:
-        print("STEP 2/11 — Workspace")
+        print("STEP 2/12 — Workspace")
         print(f"Detected workspace root: {workspace_root}")
         ws_choice = _safe_input("Is this correct? [Y/n]: ", _input).strip().lower()
         if ws_choice == "n":
@@ -211,7 +211,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     slack_enabled = False
     try:
-        print("STEP 3/11 — Slack (optional)")
+        print("STEP 3/12 — Slack (optional)")
         print("Slack integration enables: notifications, phone control, remote approvals.")
         print("To set up, create a Slack app at https://api.slack.com/apps with:")
         print("  - Socket Mode enabled")
@@ -252,7 +252,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     github_enabled = False
     try:
-        print("STEP 4/11 — GitHub (optional)")
+        print("STEP 4/12 — GitHub (optional)")
         print("GitHub integration enables: PR listing, issue viewing, code diffs.")
         print("Create a Personal Access Token at: https://github.com/settings/tokens")
         print("  - Scopes: repo (for private repos) or public_repo (for public)")
@@ -273,7 +273,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     web_enabled = False
     try:
-        print("STEP 5/11 — Web search (optional)")
+        print("STEP 5/12 — Web search (optional)")
         print("Web search uses the Brave Search API (free tier — no credit card required).")
         print("Sign up at: https://brave.com/search/api/")
         print("  - Free tier: 2000 queries/month")
@@ -307,7 +307,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     email_enabled = False
     try:
-        print("STEP 6/11 — Email (optional)")
+        print("STEP 6/12 — Email (optional)")
         print("Email integration provides read-only IMAP inbox access + local draft staging.")
         print("For Gmail: create an App Password at https://myaccount.google.com/apppasswords")
         print("  (requires 2-factor authentication)")
@@ -336,7 +336,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     cost_cap = "2.00"
     try:
-        print("STEP 7/11 — Cost circuit breaker")
+        print("STEP 7/12 — Cost circuit breaker")
         print("Praxis will stop a session if estimated API cost exceeds this limit.")
         print("(For OAuth/subscription users, this is an estimate — no actual billing impact.)")
         print()
@@ -357,7 +357,7 @@ def run_wizard(
     briefing_task_id: str | None = None
     briefing_next_run: str | None = None
     try:
-        print("STEP 8/11 — Morning briefing (optional)")
+        print("STEP 8/12 — Morning briefing (optional)")
         print("A daily 7am briefing asks: 'wiki query: what are my priorities for today?'")
         print("Requires: pip install praxis[scheduler]")
         print()
@@ -398,7 +398,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     wiki_copied = 0
     try:
-        print("STEP 9/11 — Personal wiki seed (optional)")
+        print("STEP 9/12 — Personal wiki seed (optional)")
         print("Drop notes or documents into wiki/raw/ to seed your personal knowledge wiki.")
         print("Praxis will ingest them when you run: python -m praxis \"wiki ingest wiki/raw/\"")
         print()
@@ -440,7 +440,7 @@ def run_wizard(
     # STEP 10 — Default mode
     # -----------------------------------------------------------------------
     try:
-        print("STEP 10/11 — Default mode")
+        print("STEP 10/12 — Default mode")
         print("Which mode should Praxis use by default?")
         print()
         print("  (1) build  [full access — default]")
@@ -462,7 +462,41 @@ def run_wizard(
         print()
 
     # -----------------------------------------------------------------------
-    # STEP 11/11 — Write .env and print summary
+    # STEP 11 — Telegram (optional)
+    # -----------------------------------------------------------------------
+    telegram_enabled = False
+    try:
+        print("STEP 11/12 — Telegram (optional)")
+        print("Telegram integration receives inbound messages as Tasks and stages replies.")
+        print("Replies are NEVER sent autonomously by default — they are staged for review.")
+        print("To set up, create a bot via BotFather: https://t.me/BotFather → /newbot")
+        print("Requires: pip install -e \".[telegram]\"")
+        print()
+        telegram_choice = _safe_input("Enable Telegram? [y/N]: ", _input).strip().lower()
+        if telegram_choice == "y":
+            telegram_enabled = True
+            # Token is collected via getpass so it is never echoed to the terminal
+            telegram_token = _safe_getpass("  TELEGRAM_BOT_TOKEN: ", _getpass)
+            if telegram_token:
+                env_data["TELEGRAM_BOT_TOKEN"] = telegram_token
+            # Add api.telegram.org to the domain allowlist
+            current_domains = env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+            telegram_domain = "api.telegram.org"
+            if current_domains:
+                if telegram_domain not in current_domains:
+                    env_data["PRAXIS_ALLOWED_DOMAINS"] = current_domains + "," + telegram_domain
+            else:
+                env_data["PRAXIS_ALLOWED_DOMAINS"] = telegram_domain
+            print("  Telegram enabled. Configure trusted_contacts in convergence.yaml if desired.")
+        else:
+            print("  Skipping Telegram (can be configured later via .env and convergence.yaml).")
+    except Exception as exc:
+        print(f"  Warning: step 11 error ({exc}), continuing.")
+
+    print()
+
+    # -----------------------------------------------------------------------
+    # STEP 12/12 — Write .env and print summary
     # -----------------------------------------------------------------------
     try:
         _write_env(env_file, env_data, _env_mode)
@@ -488,6 +522,7 @@ def run_wizard(
     github_display = "enabled" if github_enabled else "not configured"
     web_display = "enabled" if web_enabled else "not configured"
     email_display = "enabled" if email_enabled else "not configured"
+    telegram_display = "enabled" if telegram_enabled else "not configured"
     cost_display = f"${cost_cap}"
     briefing_display = "scheduled" if briefing_scheduled else "not scheduled"
     wiki_display = f"{wiki_copied} files" if wiki_copied > 0 else "skipped"
@@ -502,6 +537,7 @@ def run_wizard(
     print(f"  GitHub:     {github_display}")
     print(f"  Web search: {web_display}")
     print(f"  Email:      {email_display}")
+    print(f"  Telegram:   {telegram_display}")
     print(f"  Cost cap:   {cost_display}")
     print(f"  Briefing:   {briefing_display}")
     print(f"  Wiki seed:  {wiki_display}")

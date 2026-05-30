@@ -40,7 +40,16 @@ class Orchestrator:
 
     def _load_system_prompt(self) -> str:
         path = self.config.workspace_root / "praxis-system-prompt.md"
-        return path.read_text()
+        governance_text = path.read_text()
+
+        # Append SOUL.md persona context AFTER the §5 governance block — never before.
+        # Content is treated as data (user context), not directives. Never logged.
+        soul_path = self.config.workspace_root / ".praxis" / "SOUL.md"
+        if soul_path.exists():
+            soul_text = soul_path.read_text()
+            return governance_text + "\n\n" + soul_text
+
+        return governance_text
 
     def run(self, user_message: str, model: str | None = None, mode: "Mode | None" = None) -> str:
         """Run the orchestrator agent loop with the full system prompt."""

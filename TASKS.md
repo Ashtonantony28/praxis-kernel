@@ -25,8 +25,8 @@
 
 ## Phase H — new work ([ ] = not yet started)
 
-- [ ] TASK-H01: SOUL.md persona layer — files: praxis/orchestrator.py, wiki/SOUL.md (template), .gitignore — deps: none
-- [ ] TASK-H02: HEARTBEAT.md proactive trigger — files: praxis/queue_runner.py, praxis/scheduler.py, .praxis/HEARTBEAT.md (template), .gitignore — deps: none (independent of H01)
-- [ ] TASK-H03: Telegram adapter — files: praxis/integrations/telegram.py, praxis/slack_listener.py (reference), pyproject.toml, convergence.yaml, .env.example — deps: none (independent of H01, H02)
-- [ ] TASK-H04: Tests for H01/H02/H03 — files: tests/test_soul.py, tests/test_heartbeat.py, tests/test_telegram.py — deps: TASK-H01, TASK-H02, TASK-H03
-- [ ] TASK-H05: Scribe pass — files: CLAUDE.md, README.md, .gitignore, praxis/setup_wizard.py, .env.example, .praxis/memory/morning-handoff.md — deps: TASK-H04
+- [x] TASK-H01: SOUL.md persona layer — files: praxis/orchestrator.py, wiki/SOUL.md (template), .gitignore — deps: none
+- [x] TASK-H02: HEARTBEAT.md proactive trigger — files: praxis/queue_runner.py, praxis/scheduler.py, .praxis/HEARTBEAT.md (template), .gitignore — deps: none (independent of H01)
+- [x] TASK-H03: Telegram adapter — files: praxis/integrations/telegram.py, praxis/slack_listener.py (reference), pyproject.toml, convergence.yaml, .env.example — deps: none (independent of H01, H02)
+- [x] TASK-H04: Tests for H01/H02/H03 — files: tests/test_soul.py, tests/test_heartbeat.py, tests/test_telegram.py — deps: TASK-H01, TASK-H02, TASK-H03
+- [x] TASK-H05: Scribe pass — files: CLAUDE.md, README.md, .gitignore, praxis/setup_wizard.py, .env.example, .praxis/memory/morning-handoff.md — deps: TASK-H04

@@ -7,9 +7,11 @@ Optional dep: pip install praxis[scheduler]  (installs croniter>=1.0)
 from __future__ import annotations
 
 import json
+import re
+import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,6 +19,170 @@ if TYPE_CHECKING:
     pass
 
 from praxis.queue import Task, TaskQueue
+
+# ---------------------------------------------------------------------------
+# HEARTBEAT.md support
+# ---------------------------------------------------------------------------
+
+# In-memory dedup: set of (section_title, iso_date_str) tuples.
+# Reset on process restart — intentional, prevents same section firing twice
+# within a run but allows it to fire again after restart on a new day.
+_heartbeat_fired: set[tuple[str, str]] = set()
+
+# Tracks the last time check_heartbeat() actually ran, for interval enforcement.
+_heartbeat_last_run: datetime | None = None
+
+_DAY_SPECS: dict[str, set[int]] = {
+    "daily":    {0, 1, 2, 3, 4, 5, 6},
+    "weekdays": {0, 1, 2, 3, 4},
+    "weekends": {5, 6},
+    "monday":   {0},
+    "tuesday":  {1},
+    "wednesday":{2},
+    "thursday": {3},
+    "friday":   {4},
+    "saturday": {5},
+    "sunday":   {6},
+}
+
+_WHEN_RE = re.compile(
+    r"^\s*when:\s*(\w+)\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\s*$",
+    re.IGNORECASE,
+)
+
+
+def _parse_time(s: str) -> time:
+    h, m = s.split(":")
+    return time(int(h), int(m))
+
+
+def _parse_heartbeat(content: str) -> list[dict]:
+    """
+    Parse HEARTBEAT.md content into a list of section dicts:
+      {"title": str, "day_spec": str, "start": time, "end": time, "body": str}
+
+    Only H2 sections (## Title) with a valid `when:` line immediately below are included.
+    Content body is collected (stripped) but never logged verbatim.
+    """
+    sections = []
+    lines = content.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("## "):
+            title = line[3:].strip()
+            # Look for when: on the very next non-blank line
+            j = i + 1
+            while j < len(lines) and lines[j].strip() == "":
+                j += 1
+            if j < len(lines):
+                m = _WHEN_RE.match(lines[j])
+                if m:
+                    day_spec_raw, start_raw, end_raw = m.group(1), m.group(2), m.group(3)
+                    day_spec = day_spec_raw.lower()
+                    if day_spec in _DAY_SPECS:
+                        try:
+                            start_t = _parse_time(start_raw)
+                            end_t = _parse_time(end_raw)
+                        except ValueError:
+                            i += 1
+                            continue
+                        # Collect body lines until the next H2 or EOF
+                        body_lines = []
+                        k = j + 1
+                        while k < len(lines) and not lines[k].startswith("## "):
+                            body_lines.append(lines[k])
+                            k += 1
+                        sections.append({
+                            "title": title,
+                            "day_spec": day_spec,
+                            "start": start_t,
+                            "end": end_t,
+                            "body": "\n".join(body_lines).strip(),
+                        })
+                        i = k
+                        continue
+        i += 1
+    return sections
+
+
+def check_heartbeat(
+    queue: TaskQueue,
+    workspace_root: Path,
+    *,
+    heartbeat_interval_minutes: int = 30,
+) -> list[str]:
+    """
+    Read .praxis/HEARTBEAT.md, find sections whose `when:` window matches the
+    current local time and weekday, and enqueue a low-priority Task for each
+    that hasn't already fired today (in-memory dedup).
+
+    Returns a list of section titles that were enqueued this call.
+
+    Never logs HEARTBEAT.md content verbatim.
+    """
+    global _heartbeat_last_run
+
+    now_local = datetime.now()  # local time for user-facing schedule matching
+    now_utc = datetime.now(timezone.utc)
+
+    # Enforce interval — only run if enough time has elapsed since last run.
+    if _heartbeat_last_run is not None:
+        elapsed_minutes = (now_utc - _heartbeat_last_run.replace(tzinfo=timezone.utc)
+                           if _heartbeat_last_run.tzinfo is None
+                           else (now_utc - _heartbeat_last_run).total_seconds() / 60)
+        if isinstance(elapsed_minutes, float) and elapsed_minutes < heartbeat_interval_minutes:
+            return []
+
+    _heartbeat_last_run = now_utc
+
+    heartbeat_path = workspace_root / ".praxis" / "HEARTBEAT.md"
+    if not heartbeat_path.exists():
+        return []
+
+    try:
+        content = heartbeat_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    sections = _parse_heartbeat(content)
+
+    today_str = now_local.date().isoformat()
+    current_weekday = now_local.weekday()  # Monday=0, Sunday=6
+    current_time = now_local.time().replace(second=0, microsecond=0)
+
+    enqueued: list[str] = []
+
+    for sec in sections:
+        # Check weekday match
+        if current_weekday not in _DAY_SPECS.get(sec["day_spec"], set()):
+            continue
+
+        # Check time window
+        if not (sec["start"] <= current_time < sec["end"]):
+            continue
+
+        # Dedup: only fire once per (title, date) per process lifetime
+        dedup_key = (sec["title"], today_str)
+        if dedup_key in _heartbeat_fired:
+            continue
+
+        # Build a prompt that describes the section intent without dumping personal content
+        prompt = (
+            f"[HEARTBEAT] {sec['title']}: {sec['body']}"
+            if sec["body"]
+            else f"[HEARTBEAT] {sec['title']}"
+        )
+
+        # LOW priority = 10 (higher number = lower priority in TaskQueue.next_pending sort)
+        queue.ensure_dirs()
+        queue.append(Task.create(prompt=prompt, priority=10))
+
+        _heartbeat_fired.add(dedup_key)
+        enqueued.append(sec["title"])
+        sys.stderr.write(f"[praxis] heartbeat: enqueued section '{sec['title']}'\n")
+
+    return enqueued
 
 
 def _now_utc() -> str:

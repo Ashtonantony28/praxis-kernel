@@ -38,6 +38,17 @@ task_types:
   default:
     runtime: claude
 
+# ─── Channels ────────────────────────────────────────────────────────────────
+channels:
+  telegram:
+    autonomy: staged          # staged | autonomous
+    trusted_contacts: []      # list of Telegram user_ids (integers)
+    max_autonomous_reply_words: 50
+
+# ─── Allowed domains ─────────────────────────────────────────────────────────
+allowed_domains:
+  - api.telegram.org          # Telegram Bot API (TASK-H03)
+
 # Local runtime settings (used when runtime: local)
 # local:
 #   base_url: http://localhost:11434

@@ -33,6 +33,10 @@ wiki/graph.json
 wiki/index.md
 wiki/log.md
 
+# Personal data — never commit
+.praxis/SOUL.md
+.praxis/HEARTBEAT.md
+
 # Operational state — never commit
 .praxis/memory/*
 !.praxis/memory/.gitkeep

@@ -158,44 +158,70 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
 
 
 def _start_scheduler_thread(queue: TaskQueue, workspace_root: Path) -> None:
-    """Start a background daemon thread that runs CronScheduler.tick() on an interval.
+    """Start a background daemon thread that runs CronScheduler.tick() and
+    check_heartbeat() on a configurable interval.
 
-    - Reads PRAXIS_SCHEDULER_POLL_INTERVAL env var (default 60 seconds).
+    - Reads PRAXIS_SCHEDULER_POLL_INTERVAL env var (default 60 seconds) for
+      cron tick frequency.
+    - Reads PRAXIS_HEARTBEAT_INTERVAL_MINUTES env var (default 30) for how
+      often check_heartbeat() actually fires (enforced inside check_heartbeat).
     - Creates CronScheduler with schedule_file and log_file under workspace_root.
     - Calls scheduler.load() before starting the thread.
     - Thread is daemon=True — dies automatically when the main process exits.
-    - Thread loop: while True: scheduler.tick(); time.sleep(poll_interval)
-    - If croniter is not installed (ImportError), logs a warning and returns without
-      starting a thread (does NOT crash the queue runner).
+    - Thread loop: while True: scheduler.tick(); check_heartbeat(); sleep(poll_interval)
+    - If croniter is not installed (ImportError), the cron scheduler is skipped but
+      heartbeat checking still runs (does NOT crash the queue runner).
     """
+    from praxis.scheduler import check_heartbeat
+
+    heartbeat_interval = int(os.environ.get("PRAXIS_HEARTBEAT_INTERVAL_MINUTES", "30"))
+
     try:
         from praxis.scheduler import CronScheduler
+        poll_interval = int(os.environ.get("PRAXIS_SCHEDULER_POLL_INTERVAL", "60"))
+
+        schedule_file = workspace_root / ".praxis" / "schedule" / "tasks.json"
+        log_file = workspace_root / ".praxis" / "logs" / "scheduler.log"
+
+        scheduler: "CronScheduler | None" = CronScheduler(
+            queue=queue, schedule_file=schedule_file, log_file=log_file
+        )
+        scheduler.load()
+        sys.stderr.write(f"[praxis] scheduler: polling every {poll_interval}s\n")
     except ImportError:
         sys.stderr.write(
-            "[praxis] scheduler: croniter not installed — scheduled triggers disabled."
+            "[praxis] scheduler: croniter not installed — cron triggers disabled."
             " Run: pip install praxis[scheduler]\n"
         )
-        return
+        scheduler = None
+        poll_interval = int(os.environ.get("PRAXIS_SCHEDULER_POLL_INTERVAL", "60"))
 
-    poll_interval = int(os.environ.get("PRAXIS_SCHEDULER_POLL_INTERVAL", "60"))
-
-    schedule_file = workspace_root / ".praxis" / "schedule" / "tasks.json"
-    log_file = workspace_root / ".praxis" / "logs" / "scheduler.log"
-
-    scheduler = CronScheduler(queue=queue, schedule_file=schedule_file, log_file=log_file)
-    scheduler.load()
-
-    sys.stderr.write(f"[praxis] scheduler: polling every {poll_interval}s\n")
+    sys.stderr.write(
+        f"[praxis] heartbeat: checking every {heartbeat_interval} min\n"
+    )
 
     # Use a threading.Event for sleep so tests that mock time.sleep don't interfere.
     _stop_event = threading.Event()
 
     def _scheduler_loop() -> None:
         while True:
+            if scheduler is not None:
+                try:
+                    scheduler.tick()
+                except Exception as exc:
+                    sys.stderr.write(
+                        f"[praxis] scheduler: tick() raised unexpected error: {exc}\n"
+                    )
             try:
-                scheduler.tick()
+                check_heartbeat(
+                    queue,
+                    workspace_root,
+                    heartbeat_interval_minutes=heartbeat_interval,
+                )
             except Exception as exc:
-                sys.stderr.write(f"[praxis] scheduler: tick() raised unexpected error: {exc}\n")
+                sys.stderr.write(
+                    f"[praxis] heartbeat: check raised unexpected error: {exc}\n"
+                )
             _stop_event.wait(timeout=poll_interval)
 
     thread = threading.Thread(target=_scheduler_loop, daemon=True, name="praxis-scheduler")
