@@ -20,6 +20,7 @@ class SubagentDef:
     tools: list[str]
     model: str  # full model ID
     system_prompt: str  # markdown body after frontmatter
+    mode: str | None = None  # optional mode override from frontmatter
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -54,12 +55,15 @@ def parse_agent_file(path: Path) -> SubagentDef:
     model_short = front.get("model", "sonnet")
     model = MODEL_MAP.get(model_short, model_short)
 
+    mode_str = front.get("mode")  # None if not present
+
     return SubagentDef(
         name=front["name"],
         description=front.get("description", ""),
         tools=tools,
         model=model,
         system_prompt=body,
+        mode=mode_str,
     )
 
 

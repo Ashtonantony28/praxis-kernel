@@ -215,7 +215,15 @@ praxis/                          # Python orchestrator package
     cost.py                      #   CostCircuitBreaker — per-session cost cap, sys.exit(3) on breach (Phase X)
     telemetry.py                 #   TelemetryStore — per-tool structured logging; singleton; .praxis/logs/telemetry.jsonl (Phase T)
     auth.py                      #   Auth rotation hardening — JWT expiry detection, credential inventory, clean error messages (Option F)
-.claude/agents/                  # Subagent definitions (builder, planner, scout, scribe, verifier)
+.claude/agents/                  # GENERATED — do not edit; source of truth is praxis/agents/*.yaml
+praxis/agents/                   # Native subagent YAML definitions (cross-runtime source of truth)
+  __init__.py                    #   Package marker
+  scout.yaml                     #   Scout: read-only investigator, haiku, plan mode
+  planner.yaml                   #   Planner: plan-only, sonnet, plan mode
+  builder.yaml                   #   Builder: full-access executor, sonnet, build mode
+  verifier.yaml                  #   Verifier: verification-only, sonnet, plan mode
+  scribe.yaml                    #   Scribe: memory maintenance, haiku, plan mode
+  loader.py                      #   load(name)->AgentDefinition, load_all(); model alias resolution
 .claude/hooks/escalation-boundary.py  # §5 hook — blocks out-of-workspace writes, network egress
 .claude/settings.json            # Claude Code hook wiring
 tests/                           # pytest suite (767 tests, all mocked — no real API calls)
@@ -339,7 +347,7 @@ python -m pytest tests/ -v
 ## Key conventions
 
 - **§5 hook is sacred.** Every tool call passes through `escalation-boundary.py` — in both orchestrator and subagent sessions. Never bypass it.
-- **Subagent definitions live in `.claude/agents/*.md`** with YAML frontmatter (name, description, tools, model). The orchestrator loads these at startup.
+- **Subagent definitions** — source of truth is `praxis/agents/*.yaml`. `.claude/agents/*.md` is generated output (written by `ClaudeCodeRuntime.generate_agent_shims()` at startup from YAML). Non-Claude runtimes use `praxis/agents/` directly via `loader.load(name)`. Do not hand-edit `.claude/agents/` files.
 - **No real API calls in tests.** All tests use FakeClient from `tests/conftest.py`.
 - **Config from env vars.** `PRAXIS_WORKSPACE_ROOT` and `PRAXIS_MEMORY_ROOT` — restrictive fallback per §0 if unset.
 - **Model mapping:** `haiku` → `claude-haiku-4-5-20251001`, `sonnet` → `claude-sonnet-4-6`, `opus` → `claude-opus-4-6`.
@@ -457,3 +465,14 @@ python -m pytest tests/ -v
 - Defense-in-depth: `enforce()` in `praxis/runtime/enforcement.py` also checks `mode.denied_tools` — blocks a denied tool call even if the model somehow invokes it after filtering. Mode check runs after all §5 boundary checks (§5 takes precedence).
 - `Orchestrator.run()` accepts `mode: Mode | None = None` and passes it to `runtime.run_loop()`.
 - `python -m praxis --plan "task"` runs in plan mode. `python -m praxis --mode custom-mode "task"` runs with a custom mode defined in `praxis/modes.yaml`.
+
+## Subagent conventions (Phase v2-D)
+
+- `praxis/agents/*.yaml` is the **source of truth** for all subagent definitions.
+  `.claude/agents/*.md` is generated output — do not edit it directly.
+- `AgentDefinition` dataclass (in `praxis/agents/loader.py`): `name`, `model` (full ID), `mode` (plan|build), `prompt` (full system prompt), `tools` (list[str]), `background` (bool), `model_alias` (original alias).
+- `load(name)` → `AgentDefinition`; `load_all()` → `list[AgentDefinition]`. Raises `FileNotFoundError`/`ValueError` on missing/malformed files.
+- **Cross-runtime**: `Orchestrator.spawn_from_definition(agent_def, prompt)` works on all three runtimes (Claude OAuth, Cloud, Local). The orchestrator tries `praxis/agents/{name}.yaml` first, falls back to `.claude/agents/{name}.md`.
+- **Shim generation**: `ClaudeCodeRuntime.generate_agent_shims(workspace_root)` writes `.claude/agents/*.md` from YAML at startup. This uses Python file I/O (not LLM tool calls), so the §5 hook does not fire — intentional infrastructure code.
+- **Per-subagent mode routing** (Phase v2-C): Each `AgentDefinition` carries a `mode` field (`plan` or `build`). The orchestrator applies it when spawning, overriding the session mode. `convergence.yaml` `agents:` section allows per-agent mode overrides without editing YAML files.
+- **Plan approval flow** (Phase v2-B): In plan mode (`mode.requires_confirmation=True`), `Orchestrator.run()` stages the plan to `.praxis/staging/plans/{uuid}.json`. CLI: `--list-plans`, `--approve-plan <id>` (re-runs in build mode), `--reject-plan <id>`. Staged plans appear in `--list-staged`.
