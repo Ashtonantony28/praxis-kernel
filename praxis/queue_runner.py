@@ -190,7 +190,16 @@ def _start_scheduler_thread(queue: TaskQueue, workspace_root: Path) -> None:
     - If croniter is not installed (ImportError), the cron scheduler is skipped but
       heartbeat checking still runs (does NOT crash the queue runner).
     """
-    from praxis.scheduler import check_heartbeat
+
+    # Import check_heartbeat independently — it does not require croniter.
+    # Provide a no-op fallback so _scheduler_loop never hits NameError even when
+    # praxis.scheduler itself cannot be imported (e.g. during tests that patch
+    # builtins.__import__ to simulate croniter being absent).
+    try:
+        from praxis.scheduler import check_heartbeat
+    except ImportError:
+        def check_heartbeat(*args, **kwargs):  # type: ignore[misc]
+            """No-op: praxis.scheduler unavailable."""
 
     heartbeat_interval = int(os.environ.get("PRAXIS_HEARTBEAT_INTERVAL_MINUTES", "30"))
 
