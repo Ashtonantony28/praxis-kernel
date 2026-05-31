@@ -49,6 +49,24 @@ def _create_runtimes(conv: ConvergenceConfig):
     return default, overrides
 
 
+def _hmac_sign(entry: dict, key: str) -> str:
+    """Return hex HMAC-SHA256 of the canonical JSON of entry (excluding '_hmac' key)."""
+    import hashlib as _hashlib
+    import hmac as _hmac
+    import json as _json
+    payload = {k: v for k, v in entry.items() if k != "_hmac"}
+    canonical = _json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return _hmac.new(key.encode(), canonical.encode(), _hashlib.sha256).hexdigest()
+
+
+def _hmac_verify(entry: dict, key: str) -> bool:
+    """Return True if entry['_hmac'] matches recomputed HMAC."""
+    stored = entry.get("_hmac")
+    if not stored:
+        return False
+    return _hmac_sign(entry, key) == stored
+
+
 def _run_approve(staging_file: "Path") -> None:
     """Interactive approval loop for staged external actions."""
     import json as _json
@@ -69,6 +87,19 @@ def _run_approve(staging_file: "Path") -> None:
                     entries.append(_json.loads(line))
                 except _json.JSONDecodeError:
                     pass
+
+    # Sign unsigned entries if HMAC key is configured
+    hmac_key = _os.environ.get("PRAXIS_STAGING_HMAC_KEY", "")
+    changed = False
+    if hmac_key:
+        for e in entries:
+            if "_hmac" not in e:
+                e["_hmac"] = _hmac_sign(e, hmac_key)
+                changed = True
+        if changed:
+            with staging_file.open("w", encoding="utf-8") as f:
+                for e in entries:
+                    f.write(_json.dumps(e) + "\n")
 
     pending = [e for e in entries if e.get("status") == "pending"]
     if not pending:
@@ -91,10 +122,16 @@ def _run_approve(staging_file: "Path") -> None:
             break
 
         if choice == "y":
-            result = _execute_approved_action(entry)
-            print(f"   → {result}")
-            entry["status"] = "approved"
-            entry["executed_result"] = result
+            hmac_key = _os.environ.get("PRAXIS_STAGING_HMAC_KEY", "")
+            if hmac_key and entry.get("_hmac") and not _hmac_verify(entry, hmac_key):
+                print("   → REJECTED: HMAC mismatch — entry may have been tampered with.")
+                entry["status"] = "rejected"
+                entry["_tamper_detected"] = True
+            else:
+                result = _execute_approved_action(entry)
+                print(f"   → {result}")
+                entry["status"] = "approved"
+                entry["executed_result"] = result
         elif choice == "s":
             print("   → Skipped (left pending).")
         else:

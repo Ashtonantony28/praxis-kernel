@@ -173,3 +173,49 @@ def test_hook_allows_bash_tee_dev_null(config: Config):
         config, "Bash", {"command": "echo test | tee /dev/null"}
     )
     assert result.allowed
+
+
+# -- Denial audit log tests ---------------------------------------------------
+
+
+def test_hook_denial_logged(config: Config, workspace: Path):
+    """A denied tool call must be appended to .praxis/security/denials.jsonl."""
+    import json
+
+    # Trigger a denial: write outside workspace
+    result = run_pretool_hook(
+        config, "Write", {"file_path": "/tmp/evil.txt", "content": "bad"}
+    )
+    assert not result.allowed  # sanity check
+
+    log_file = workspace / ".praxis" / "security" / "denials.jsonl"
+    assert log_file.exists(), "denials.jsonl was not created"
+
+    lines = [l.strip() for l in log_file.read_text().splitlines() if l.strip()]
+    assert lines, "denials.jsonl is empty"
+
+    entry = json.loads(lines[-1])
+    assert entry["tool_name"] == "Write"
+    assert "evil.txt" in entry["tool_input"].get("file_path", "")
+    assert entry["reason"]
+    assert entry["timestamp"]
+
+
+def test_hook_allowed_calls_not_logged(config: Config, workspace: Path):
+    """Allowed tool calls must NOT be written to the denial log."""
+    # Trigger an allowed call
+    result = run_pretool_hook(
+        config, "Write", {"file_path": str(workspace / "ok.txt"), "content": "fine"}
+    )
+    assert result.allowed  # sanity check
+
+    log_file = workspace / ".praxis" / "security" / "denials.jsonl"
+    # Either the file doesn't exist or it has no entries for this allowed call
+    if log_file.exists():
+        lines = [l.strip() for l in log_file.read_text().splitlines() if l.strip()]
+        # If there are entries, none should have allowed-path writes
+        for line in lines:
+            entry = json.loads(line)
+            file_path = entry.get("tool_input", {}).get("file_path", "")
+            assert str(workspace) not in file_path or "evil" in file_path, \
+                "An allowed call was incorrectly logged as a denial"

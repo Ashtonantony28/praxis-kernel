@@ -314,3 +314,110 @@ class TestRateLimiting:
 
         # At cap with default=3 → next_pending never called
         mock_queue.next_pending.assert_not_called()
+
+
+# ---------- Daemon crash recovery ----------
+
+
+class TestDaemonCrashRecovery:
+    """Verify that run_queue_loop() recovers interrupted tasks at startup."""
+
+    def test_run_queue_loop_recovers_running_tasks(self, tmp_path: Path):
+        """Tasks stuck in 'running' state (from a previous crash) are marked 'failed'
+        when the queue loop restarts, before any new task is processed."""
+        import praxis.queue_runner as qr
+
+        queue_dir = tmp_path / ".praxis" / "queue"
+        queue_dir.mkdir(parents=True)
+        (queue_dir / "results").mkdir()
+
+        real_queue = TaskQueue(queue_dir)
+        real_queue.ensure_dirs()
+
+        # Simulate a task that was left in 'running' state by a prior crash
+        interrupted = Task.create("was running when daemon died")
+        real_queue.append(interrupted)
+        real_queue.update_status(interrupted.id, "running")
+
+        # Verify the task is indeed 'running' before we start the loop
+        pre = real_queue._read_all()
+        assert pre[0].status == "running"
+
+        # We'll pass the real queue to the loop via mock so we can inspect it
+        # after recover_interrupted() is called at startup, before any tasks run.
+        recovered_count = []
+
+        original_recover = real_queue.recover_interrupted
+
+        def spy_recover():
+            count = original_recover()
+            recovered_count.append(count)
+            return count
+
+        real_queue.recover_interrupted = spy_recover  # type: ignore[method-assign]
+
+        # Patch enough of run_queue_loop so it exits immediately after startup
+        call_count = 0
+
+        def fake_sleep(_):
+            nonlocal call_count
+            call_count += 1
+            qr._shutdown_requested = True
+
+        with patch("praxis.queue_runner.TaskQueue", return_value=real_queue):
+            with patch("praxis.queue_runner.CheckpointStore"):
+                with patch("praxis.queue_runner.Config"):
+                    with patch("praxis.queue_runner.ConvergenceConfig"):
+                        with patch(
+                            "praxis.queue_runner._create_runtimes_for_queue",
+                            return_value=(MagicMock(), {}, {}),
+                        ):
+                            with patch("praxis.queue_runner.Orchestrator"):
+                                with patch(
+                                    "praxis.queue_runner._start_scheduler_thread"
+                                ):
+                                    with patch(
+                                        "praxis.queue_runner.time.sleep",
+                                        side_effect=fake_sleep,
+                                    ):
+                                        try:
+                                            qr.run_queue_loop(tmp_path)
+                                        finally:
+                                            qr._shutdown_requested = False
+
+        # recover_interrupted() must have been called
+        assert recovered_count, "recover_interrupted() was never called by run_queue_loop()"
+        assert recovered_count[0] == 1, f"Expected 1 recovered task, got {recovered_count[0]}"
+
+        # The interrupted task must now be marked 'failed'
+        post = real_queue._read_all()
+        assert post[0].status == "failed"
+        assert "interrupted" in (post[0].error or "")
+
+    def test_recover_does_not_affect_pending_or_done(self, tmp_path: Path):
+        """recover_interrupted() must only touch 'running' tasks, not 'pending' or 'done'."""
+        queue_dir = tmp_path / ".praxis" / "queue"
+        queue_dir.mkdir(parents=True)
+
+        q = TaskQueue(queue_dir)
+        q.ensure_dirs()
+
+        pending_task = Task.create("still pending")
+        q.append(pending_task)
+
+        done_task = Task.create("already done")
+        q.append(done_task)
+        q.update_status(done_task.id, "done", result="ok")
+
+        running_task = Task.create("interrupted mid-run")
+        q.append(running_task)
+        q.update_status(running_task.id, "running")
+
+        recovered = q.recover_interrupted()
+        assert recovered == 1
+
+        tasks = {t.id: t for t in q._read_all()}
+        assert tasks[pending_task.id].status == "pending"
+        assert tasks[done_task.id].status == "done"
+        assert tasks[running_task.id].status == "failed"
+        assert "interrupted" in (tasks[running_task.id].error or "")

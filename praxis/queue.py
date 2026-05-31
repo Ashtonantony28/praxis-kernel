@@ -133,3 +133,15 @@ class TaskQueue:
         for t in tasks:
             counts[t.status] = counts.get(t.status, 0) + 1
         return counts
+
+    def move_to_dead_letter(self, task: "Task", error: str, max_retries: int) -> None:
+        """Mark task failed and append a copy to dead_letter.jsonl for human review."""
+        from datetime import datetime, timezone
+        self.update_status(task.id, "failed", error=f"dead-lettered after {max_retries} retries: {error}")
+        dl_file = self.queue_dir / "dead_letter.jsonl"
+        entry = task.to_dict()
+        entry["dead_lettered_at"] = datetime.now(timezone.utc).isoformat()
+        entry["final_error"] = error
+        entry["retries_exhausted"] = max_retries
+        with dl_file.open("a") as f:
+            f.write(json.dumps(entry) + "\n")

@@ -20,6 +20,10 @@ from .runtime.base import Runtime
 
 _shutdown_requested = False
 
+_TASK_MAX_RETRIES = int(os.environ.get("PRAXIS_TASK_MAX_RETRIES", "3"))
+_TASK_INITIAL_BACKOFF = float(os.environ.get("PRAXIS_TASK_INITIAL_BACKOFF_SECONDS", "5.0"))
+_TASK_MAX_BACKOFF = float(os.environ.get("PRAXIS_TASK_MAX_BACKOFF_SECONDS", "60.0"))
+
 
 def _handle_sigterm(signum: int, frame: object) -> None:
     global _shutdown_requested
@@ -95,26 +99,40 @@ def _run_single_task(
 
 
 def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue) -> None:
-    """Run a task as a single orchestrator call.
+    """Run a task as a single orchestrator call, with exponential backoff on failure.
 
-    Atomic tasks are not interrupted by SIGTERM; they run to completion.
-    This means that if a SIGTERM is received during an atomic task, the task
-    will still attempt to complete. The `recover_interrupted` function
-    marks tasks as 'failed' if they were 'running' at the time of interruption.
-    It cannot distinguish between an atomic task that crashed and one that
-    completed successfully after SIGTERM but before the process exited.
-    This is by design for atomic tasks to ensure they finish their work.
+    Retries up to _TASK_MAX_RETRIES times (env: PRAXIS_TASK_MAX_RETRIES, default 3).
+    Backoff: initial 5 s (PRAXIS_TASK_INITIAL_BACKOFF_SECONDS), doubles each attempt,
+    capped at 60 s (PRAXIS_TASK_MAX_BACKOFF_SECONDS).
+    After all retries exhausted, task is dead-lettered to queue_dir/dead_letter.jsonl.
     """
     queue.update_status(task.id, "running")
     sys.stderr.write(f"[praxis] running task {task.id}: {task.prompt[:80]}\n")
-    try:
-        result = orch.run(task.prompt)
-        queue.update_status(task.id, "done", result=result)
-        queue.write_result(task.id, result)
-        sys.stderr.write(f"[praxis] task {task.id} done\n")
-    except Exception as exc:
-        queue.update_status(task.id, "failed", error=str(exc))
-        sys.stderr.write(f"[praxis] task {task.id} failed: {exc}\n")
+
+    last_exc: Exception | None = None
+    for attempt in range(_TASK_MAX_RETRIES):
+        try:
+            result = orch.run(task.prompt)
+            queue.update_status(task.id, "done", result=result)
+            queue.write_result(task.id, result)
+            sys.stderr.write(f"[praxis] task {task.id} done\n")
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _TASK_MAX_RETRIES - 1:
+                backoff = min(_TASK_INITIAL_BACKOFF * (2 ** attempt), _TASK_MAX_BACKOFF)
+                sys.stderr.write(
+                    f"[praxis] task {task.id} attempt {attempt + 1}/{_TASK_MAX_RETRIES} failed: {exc}; "
+                    f"retrying in {backoff:.1f}s\n"
+                )
+                time.sleep(backoff)
+
+    # All retries exhausted
+    error_str = str(last_exc) if last_exc else "unknown error"
+    sys.stderr.write(
+        f"[praxis] task {task.id} exhausted {_TASK_MAX_RETRIES} retries; moving to dead letter\n"
+    )
+    queue.move_to_dead_letter(task, error_str, _TASK_MAX_RETRIES)
 
 
 def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store: CheckpointStore) -> None:
