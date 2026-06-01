@@ -11,6 +11,25 @@ from .runtime import ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
 from .runtime.base import Runtime
 
 
+def _load_dotenv(path: str) -> bool:
+    """Minimal .env loader using stdlib only. Returns True if file was found."""
+    import os as _os
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key:
+                    _os.environ.setdefault(key, value)
+        return True
+    except FileNotFoundError:
+        return False
+
+
 def _create_runtimes(conv: ConvergenceConfig):
     """Create all runtimes needed by the convergence config.
 
@@ -544,6 +563,12 @@ def _parse_mode(argv: list[str]) -> str:
 
 
 def main() -> None:
+    # Auto-load .env before any mode dispatch so all commands see credentials.
+    import os as _os_env
+    from pathlib import Path as _Path_env
+    _ws = _Path_env(_os_env.environ.get("PRAXIS_WORKSPACE_ROOT", _os_env.getcwd()))
+    _load_dotenv(str(_ws / ".env"))
+
     try:
         mode = _parse_mode(sys.argv)
 

@@ -203,8 +203,30 @@ _STATUS_SYMBOL = {
 }
 
 
+def _load_dotenv(path: str) -> bool:
+    """Minimal .env loader using stdlib only. Returns True if file was found."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key:
+                    os.environ.setdefault(key, value)
+        return True
+    except FileNotFoundError:
+        return False
+
+
 def run_validation(workspace_root=None) -> dict:
     """Run all checks; return {name: (status, detail)} dict. Also prints table."""
+    # Auto-load .env so credentials set there are visible to checks.
+    _env_dir = str(workspace_root) if workspace_root is not None else os.environ.get("PRAXIS_WORKSPACE_ROOT", os.getcwd())
+    _dotenv_loaded = _load_dotenv(os.path.join(_env_dir, ".env"))
+
     results = {}
     for name, fn in _CHECKS:
         try:
@@ -215,6 +237,8 @@ def run_validation(workspace_root=None) -> dict:
 
     print("Praxis — Connection Validation")
     print("================================")
+    if _dotenv_loaded:
+        print("  Loaded credentials from .env")
     for name, (status, detail) in results.items():
         symbol = _STATUS_SYMBOL.get(status, "?")
         if status == "fail":
@@ -232,23 +256,6 @@ def run_validation(workspace_root=None) -> dict:
     print(f"{total} checks: {passed} passed, {failed} failed, {skipped} skipped")
 
     return results
-
-
-def _load_dotenv(path: str) -> None:
-    """Minimal .env loader using stdlib only."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key and key not in os.environ:
-                    os.environ[key] = value
-    except FileNotFoundError:
-        pass
 
 
 if __name__ == "__main__":

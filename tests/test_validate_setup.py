@@ -345,3 +345,65 @@ class TestRunValidation:
         assert "1 passed" in captured.out
         assert "1 failed" in captured.out
         assert "7 skipped" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# TestDotenvAutoLoad
+# ---------------------------------------------------------------------------
+
+class TestDotenvAutoLoad:
+    """Verify run_validation() auto-loads .env before running checks."""
+
+    def test_dotenv_loaded_before_checks(self, monkeypatch, tmp_path):
+        """Credentials in .env are visible to check functions during run_validation()."""
+        import os
+
+        # Write a .env with a fake Linear key
+        env_file = tmp_path / ".env"
+        env_file.write_text("PRAXIS_LINEAR_API_KEY=fake_lin_key_autoload_test\n")
+
+        monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.delenv("PRAXIS_LINEAR_API_KEY", raising=False)
+
+        # Replace _CHECKS with a single check that records what it sees in env
+        recorded_key = []
+
+        def fake_linear():
+            recorded_key.append(os.environ.get("PRAXIS_LINEAR_API_KEY", ""))
+            return ("fail", "mocked network")
+
+        monkeypatch.setattr(validate_setup, "_CHECKS", [("Linear", fake_linear)])
+
+        results = validate_setup.run_validation()
+
+        # Clean up the side-effect of auto-loading on os.environ
+        os.environ.pop("PRAXIS_LINEAR_API_KEY", None)
+
+        assert recorded_key == ["fake_lin_key_autoload_test"], (
+            "check_linear did not see the key loaded from .env; got: " + repr(recorded_key)
+        )
+        assert results["Linear"][0] != "skip", "Linear check was skipped despite credential in .env"
+
+    def test_dotenv_loaded_message_printed(self, monkeypatch, tmp_path, capsys):
+        """run_validation() prints 'Loaded credentials from .env' when .env exists."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("# empty test env\n")
+
+        monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setattr(validate_setup, "_CHECKS", [])  # no actual checks
+
+        validate_setup.run_validation()
+
+        out = capsys.readouterr().out
+        assert "Loaded credentials from .env" in out
+
+    def test_no_dotenv_message_when_missing(self, monkeypatch, tmp_path, capsys):
+        """run_validation() does NOT print the .env message when .env is absent."""
+        # tmp_path has no .env file
+        monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setattr(validate_setup, "_CHECKS", [])
+
+        validate_setup.run_validation()
+
+        out = capsys.readouterr().out
+        assert "Loaded credentials from .env" not in out
