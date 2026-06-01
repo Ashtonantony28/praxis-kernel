@@ -208,3 +208,9 @@ All Phase I Session 3 items delivered:
 - TASK-I3F5C+I3F6B: setup_wizard.py STEP 13/14 WhatsApp; all 1/13-12/13 labels renumbered to 1/14-12/14; validation call at wizard end; __main__.py --whatsapp-listen + --validate; .env.example WhatsApp section
 - TASK-I3F6A: scripts/validate_setup.py — 9 checks (email/calendar/github/linear/notion/slack/telegram/whatsapp/web); pass/fail/skip table; run_validation() importable; CLI with --load-dotenv; stdlib only
 - TASK-I3TESTS: 20 WhatsApp + 30 validate_setup tests (50 new); 1010 pre-existing all pass; total 1060
+
+### FIX: auto-load .env in validator and main entrypoint (completed 2026-06-01)
+- scripts/validate_setup.py: moved _load_dotenv() above run_validation(); call it at top of run_validation() using workspace_root param or PRAXIS_WORKSPACE_ROOT env; returns bool; prints "Loaded credentials from .env" if loaded
+- praxis/__main__.py: added _load_dotenv() at module level; called at top of main() before mode dispatch — all commands now see .env credentials
+- tests/test_validate_setup.py: added TestDotenvAutoLoad with 3 tests (credential visible to check, message printed, no message when absent)
+- Full suite: 1056 passed (7 pre-existing orchestrator failures unrelated to this change), 0 new failures
