@@ -114,7 +114,7 @@ def run_wizard(
     # STEP 1 — Runtime selection
     # -----------------------------------------------------------------------
     try:
-        print("STEP 1/12 — Runtime")
+        print("STEP 1/13 — Runtime")
         print("Which runtime would you like to use?")
         print()
         print("  (1) Claude subscription OAuth     [flat cost, recommended]")
@@ -189,7 +189,7 @@ def run_wizard(
     # STEP 2 — Workspace confirmation
     # -----------------------------------------------------------------------
     try:
-        print("STEP 2/12 — Workspace")
+        print("STEP 2/13 — Workspace")
         print(f"Detected workspace root: {workspace_root}")
         ws_choice = _safe_input("Is this correct? [Y/n]: ", _input).strip().lower()
         if ws_choice == "n":
@@ -211,7 +211,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     slack_enabled = False
     try:
-        print("STEP 3/12 — Slack (optional)")
+        print("STEP 3/13 — Slack (optional)")
         print("Slack integration enables: notifications, phone control, remote approvals.")
         print("To set up, create a Slack app at https://api.slack.com/apps with:")
         print("  - Socket Mode enabled")
@@ -252,7 +252,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     github_enabled = False
     try:
-        print("STEP 4/12 — GitHub (optional)")
+        print("STEP 4/13 — GitHub (optional)")
         print("GitHub integration enables: PR listing, issue viewing, code diffs.")
         print("Create a Personal Access Token at: https://github.com/settings/tokens")
         print("  - Scopes: repo (for private repos) or public_repo (for public)")
@@ -273,7 +273,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     web_enabled = False
     try:
-        print("STEP 5/12 — Web search (optional)")
+        print("STEP 5/13 — Web search (optional)")
         print("Web search uses the Brave Search API (free tier — no credit card required).")
         print("Sign up at: https://brave.com/search/api/")
         print("  - Free tier: 2000 queries/month")
@@ -307,7 +307,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     email_enabled = False
     try:
-        print("STEP 6/12 — Email (optional)")
+        print("STEP 6/13 — Email (optional)")
         print("Email integration provides read-only IMAP inbox access + local draft staging.")
         print("For Gmail: create an App Password at https://myaccount.google.com/apppasswords")
         print("  (requires 2-factor authentication)")
@@ -336,7 +336,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     cost_cap = "2.00"
     try:
-        print("STEP 7/12 — Cost circuit breaker")
+        print("STEP 7/13 — Cost circuit breaker")
         print("Praxis will stop a session if estimated API cost exceeds this limit.")
         print("(For OAuth/subscription users, this is an estimate — no actual billing impact.)")
         print()
@@ -357,7 +357,7 @@ def run_wizard(
     briefing_task_id: str | None = None
     briefing_next_run: str | None = None
     try:
-        print("STEP 8/12 — Morning briefing (optional)")
+        print("STEP 8/13 — Morning briefing (optional)")
         print("A daily 7am briefing asks: 'wiki query: what are my priorities for today?'")
         print("Requires: pip install praxis[scheduler]")
         print()
@@ -398,7 +398,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     wiki_copied = 0
     try:
-        print("STEP 9/12 — Personal wiki seed (optional)")
+        print("STEP 9/13 — Personal wiki seed (optional)")
         print("Drop notes or documents into wiki/raw/ to seed your personal knowledge wiki.")
         print("Praxis will ingest them when you run: python -m praxis \"wiki ingest wiki/raw/\"")
         print()
@@ -440,7 +440,7 @@ def run_wizard(
     # STEP 10 — Default mode
     # -----------------------------------------------------------------------
     try:
-        print("STEP 10/12 — Default mode")
+        print("STEP 10/13 — Default mode")
         print("Which mode should Praxis use by default?")
         print()
         print("  (1) build  [full access — default]")
@@ -466,7 +466,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     telegram_enabled = False
     try:
-        print("STEP 11/12 — Telegram (optional)")
+        print("STEP 11/13 — Telegram (optional)")
         print("Telegram integration receives inbound messages as Tasks and stages replies.")
         print("Replies are NEVER sent autonomously by default — they are staged for review.")
         print("To set up, create a bot via BotFather: https://t.me/BotFather → /newbot")
@@ -496,7 +496,39 @@ def run_wizard(
     print()
 
     # -----------------------------------------------------------------------
-    # STEP 12/12 — Write .env and print summary
+    # STEP 12/13 — Confidence threshold (optional)
+    # -----------------------------------------------------------------------
+    confidence_threshold = "0.7"
+    try:
+        print("STEP 12/13 — Confidence threshold (optional)")
+        print("Before running a task, Praxis can ask its planner to rate task clarity.")
+        print("If confidence is below the threshold, the plan is staged for your review.")
+        print("  0.0 = disabled (always proceed; existing behaviour)")
+        print("  0.7 = default (ask when task is ambiguous — recommended)")
+        print("  1.0 = always ask (stage every plan for approval)")
+        print()
+        thresh_input = _safe_input(
+            "Confidence threshold [0.0-1.0, default 0.7, Enter to accept]: ", _input
+        ).strip()
+        if thresh_input:
+            try:
+                val = float(thresh_input)
+                if 0.0 <= val <= 1.0:
+                    confidence_threshold = f"{val:.1f}"
+                else:
+                    print("  Out of range [0.0-1.0], using default 0.7.")
+            except ValueError:
+                print("  Invalid number, using default 0.7.")
+        env_data["PRAXIS_CONFIDENCE_THRESHOLD"] = confidence_threshold
+        print(f"  Confidence threshold: {confidence_threshold}")
+    except Exception as exc:
+        print(f"  Warning: step 12 error ({exc}), continuing.")
+        env_data["PRAXIS_CONFIDENCE_THRESHOLD"] = confidence_threshold
+
+    print()
+
+    # -----------------------------------------------------------------------
+    # STEP 13/13 — Write .env and print summary
     # -----------------------------------------------------------------------
     try:
         _write_env(env_file, env_data, _env_mode)
@@ -538,6 +570,7 @@ def run_wizard(
     print(f"  Web search: {web_display}")
     print(f"  Email:      {email_display}")
     print(f"  Telegram:   {telegram_display}")
+    print(f"  Confidence: {confidence_threshold} threshold")
     print(f"  Cost cap:   {cost_display}")
     print(f"  Briefing:   {briefing_display}")
     print(f"  Wiki seed:  {wiki_display}")

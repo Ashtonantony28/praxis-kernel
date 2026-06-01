@@ -293,6 +293,22 @@ def _start_scheduler_thread(queue: TaskQueue, workspace_root: Path) -> None:
     thread.start()
 
 
+def _start_ambient_monitor(queue: TaskQueue, workspace_root: Path) -> None:
+    """Start ambient event monitor if PRAXIS_AMBIENT_ENABLED=true (default false).
+
+    Enabled by setting PRAXIS_AMBIENT_ENABLED=true in .env.
+    Polls email, calendar, Linear, GitHub in a background daemon thread.
+    """
+    if os.environ.get("PRAXIS_AMBIENT_ENABLED", "").lower() != "true":
+        return
+    try:
+        from .ambient import AmbientMonitor
+        monitor = AmbientMonitor(queue, workspace_root)
+        monitor.start()
+    except Exception as exc:
+        sys.stderr.write(f"[praxis] ambient monitor failed to start: {exc}\n")
+
+
 def run_queue_loop(workspace: Path) -> None:
     """Main queue processing loop — polls for tasks and runs them."""
     signal.signal(signal.SIGTERM, _handle_sigterm)
@@ -322,6 +338,7 @@ def run_queue_loop(workspace: Path) -> None:
     _notifier = _Notifier(workspace)
 
     _start_scheduler_thread(queue, workspace)
+    _start_ambient_monitor(queue, workspace)
 
     import os as _os
     if _os.environ.get("PRAXIS_MORNING_NOTIFY", "").lower() == "true":

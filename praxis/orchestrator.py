@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from .config import Config
@@ -57,6 +58,16 @@ class Orchestrator:
         """Run the orchestrator agent loop with the full system prompt."""
         import os
         model = model or os.environ.get("PRAXIS_MODEL", "claude-sonnet-4-6")
+
+        # Confidence gate: run planner check before spawning full agent loop.
+        # Default is 0 (disabled — opt-in). Set PRAXIS_CONFIDENCE_THRESHOLD=0.7 to enable.
+        # PRAXIS_CONFIDENCE_THRESHOLD=0 disables the check entirely (existing behaviour).
+        _conf_threshold = float(os.environ.get("PRAXIS_CONFIDENCE_THRESHOLD", "0"))
+        if _conf_threshold > 0:
+            _check = self._run_confidence_check(user_message)
+            if _check.get("confidence", 1.0) < _conf_threshold:
+                return self._stage_low_confidence_plan(user_message, _check, _conf_threshold)
+
         all_schemas = get_tool_schemas() + get_integration_schemas()
 
         # Prepend recent interactions to context (max 500 tokens ≈ 2000 chars)
@@ -109,6 +120,111 @@ class Orchestrator:
             _sys.stderr.write(f"[praxis] plan staged: {plan_id}\n")
 
         return result
+
+    def _run_confidence_check(self, user_message: str) -> dict:
+        """Run planner in structured mode to assess task confidence before building.
+
+        Returns {"plan": str, "confidence": float 0-1, "ambiguities": list[str]}.
+        On any parse error or subagent failure, returns high confidence so execution
+        is never blocked by a check failure.
+        """
+        import json as _json
+        import os as _os
+
+        threshold = float(_os.environ.get("PRAXIS_CONFIDENCE_THRESHOLD", "0"))
+        if threshold <= 0:
+            return {"plan": "", "confidence": 1.0, "ambiguities": []}
+
+        structured_prompt = (
+            "Analyze the following task and respond with ONLY a valid JSON object "
+            "(no markdown fences, no explanation, no extra text):\n"
+            '{"plan": "<one-sentence summary of what you would do>", '
+            '"confidence": <float 0.0 to 1.0>, '
+            '"ambiguities": ["<unclear aspect 1>", "<unclear aspect 2>"]}\n\n'
+            "confidence=1.0 means the task is fully clear and unambiguous.\n"
+            "confidence=0.0 means the task is completely unclear.\n"
+            "List only genuine ambiguities; use [] if none.\n\n"
+            f"Task:\n{user_message}"
+        )
+        try:
+            response = self.run_subagent("planner", structured_prompt)
+            # Extract the first {...} JSON object from the response
+            json_match = re.search(r'\{[^{}]*\}', response, re.DOTALL)
+            if json_match:
+                parsed = _json.loads(json_match.group(0))
+                return {
+                    "plan": str(parsed.get("plan", "")),
+                    "confidence": float(parsed.get("confidence", 1.0)),
+                    "ambiguities": list(parsed.get("ambiguities", [])),
+                }
+        except Exception:
+            pass
+        # Default to high confidence on any error — never block execution on check failure
+        return {"plan": "", "confidence": 1.0, "ambiguities": []}
+
+    def _stage_low_confidence_plan(
+        self, user_message: str, check: dict, threshold: float
+    ) -> str:
+        """Stage a low-confidence plan and notify the user to approve/reject.
+
+        Creates .praxis/staging/plans/{id}.json with status=awaiting_input.
+        Sends notification via Notifier (best-effort).
+        Returns a message to the caller describing the staged plan.
+        """
+        import uuid as _uuid
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+
+        plan_id = str(_uuid.uuid4())
+        confidence = check.get("confidence", 0.0)
+        plan_text = check.get("plan", "")
+        ambiguities = check.get("ambiguities", [])
+
+        plans_dir = self.config.workspace_root / ".praxis" / "staging" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        plan_entry = {
+            "id": plan_id,
+            "task": user_message,
+            "plan_text": plan_text,
+            "ambiguities": ambiguities,
+            "confidence": confidence,
+            "threshold": threshold,
+            "created_at": _dt.now(_tz.utc).isoformat(),
+            "status": "awaiting_input",
+        }
+        plan_file = plans_dir / f"{plan_id}.json"
+        plan_file.write_text(_json.dumps(plan_entry, indent=2), encoding="utf-8")
+
+        import sys as _sys
+        _sys.stderr.write(
+            f"[praxis] confidence={confidence:.2f} < threshold={threshold:.2f}: "
+            f"plan staged as {plan_id}\n"
+        )
+
+        # Notify — best-effort, never raises
+        try:
+            from .notifier import Notifier as _Notifier
+            notifier = _Notifier(self.config.workspace_root)
+            if ambiguities:
+                ambiguity_lines = "\n".join(f"  - {a}" for a in ambiguities)
+            else:
+                ambiguity_lines = "  (none specified)"
+            message = (
+                f"[Praxis] Task is ambiguous — I need your input before proceeding:\n"
+                f"{ambiguity_lines}\n\n"
+                f"Plan: {plan_text}\n\n"
+                f"Reply 'approve', 'reject', or clarify.\n"
+                f"Plan ID: {plan_id}"
+            )
+            notifier.notify(message)
+        except Exception:
+            pass
+
+        return (
+            f"Plan staged (confidence={confidence:.2f} < threshold={threshold:.2f}). "
+            f"ID: {plan_id}. "
+            f"Awaiting your approval via --approve-plan {plan_id}."
+        )
 
     def run_subagent(self, name: str, prompt: str) -> str:
         """Spawn a subagent session by name.

@@ -30,3 +30,9 @@
 - [x] TASK-H03: Telegram adapter — files: praxis/integrations/telegram.py, praxis/slack_listener.py (reference), pyproject.toml, convergence.yaml, .env.example — deps: none (independent of H01, H02)
 - [x] TASK-H04: Tests for H01/H02/H03 — files: tests/test_soul.py, tests/test_heartbeat.py, tests/test_telegram.py — deps: TASK-H01, TASK-H02, TASK-H03
 - [x] TASK-H05: Scribe pass — files: CLAUDE.md, README.md, .gitignore, praxis/setup_wizard.py, .env.example, .praxis/memory/morning-handoff.md — deps: TASK-H04
+
+## Phase I Session 2 — ambient awareness + confidence gate
+
+- [x] TASK-I2F3: Ambient event monitoring — praxis/ambient.py (AmbientMonitor + 4 sources), queue_runner.py wiring, .env.example
+- [x] TASK-I2F4: Confidence-gated planning — praxis/orchestrator.py (_run_confidence_check, _stage_low_confidence_plan), setup_wizard.py STEP 12/13
+- [x] TASK-I2TESTS: Tests — tests/test_ambient.py (18 tests), tests/test_confidence.py (7 tests); full suite 1010 passed
