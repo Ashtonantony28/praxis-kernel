@@ -105,18 +105,14 @@ PRESETS: dict[str, dict[str, str]] = {
     },
 }
 
-# Human-readable descriptions — tier-based language, not model names.
+# Human-readable descriptions — 2-tuple: (display_label, use_for).
+# The summary line (models + depth) is computed dynamically by _preset_summary().
 PRESET_DESCRIPTIONS = {
-    "minimal": ("Minimal", "Fast tier everywhere, 20 turns, $1.00 cap",
-                 "simple queries, wiki lookups, status checks"),
-    "low":     ("Low",     "Fast scouts, Balanced builder, 40 turns, $2.00 cap",
-                 "routine tasks, dependency audits, summaries"),
-    "medium":  ("Medium",  "Balanced everywhere, 80 turns, $5.00 cap",
-                 "most development work, code review, planning"),
-    "high":    ("High",    "Balanced scouts, Powerful builder, 120 turns, $10.00 cap",
-                 "complex refactors, architecture decisions"),
-    "max":     ("Max",     "Powerful everywhere, 200 turns, $20.00 cap",
-                 "hardest problems, security audits, major design"),
+    "minimal": ("Minimal", "simple queries, wiki lookups, status checks"),
+    "low":     ("Low",     "routine tasks, dependency audits, summaries"),
+    "medium":  ("Medium",  "most development work, code review, planning"),
+    "high":    ("High",    "complex refactors, architecture decisions"),
+    "max":     ("Max",     "hardest problems, security audits, major design"),
 }
 
 PRESET_ORDER = ["minimal", "low", "medium", "high", "max"]
@@ -163,6 +159,43 @@ def resolve_preset(preset_name: str, runtime: str) -> dict[str, str]:
         else:
             resolved[key] = val
     return resolved
+
+
+def _short_model_name(model: str) -> str:
+    """Return a display-friendly shortened model name.
+
+    Claude versioned strings (e.g. 'claude-haiku-4-5-20251001') are truncated
+    to the family prefix ('claude-haiku', 'claude-sonnet', 'claude-opus').
+    All other model strings are returned unchanged.
+    """
+    m = re.match(r'(claude-(?:haiku|sonnet|opus))', model)
+    if m:
+        return m.group(1)
+    return model
+
+
+def _preset_summary(preset_name: str, runtime: str) -> tuple[str, "str | None"]:
+    """Return (main_line, continuation_or_None) for *preset_name* on *runtime*.
+
+    Resolves tier labels to concrete model strings so the preset menu shows
+    real model names rather than vague tier labels.  Returns two strings when
+    the scout group (reviewer/scout/scribe) and builder group
+    (orchestrator/builder) use different models — the caller prints the
+    second part on its own indented line.
+
+    The ``max_turns`` value is shown as ``depth: N`` to use plain language.
+    """
+    preset = PRESETS[preset_name]
+    scout_model   = _short_model_name(_resolve_tier(preset["scout"],        runtime))
+    builder_model = _short_model_name(_resolve_tier(preset["orchestrator"], runtime))
+    turns = preset["max_turns"]
+    cap   = preset["cost_cap"]
+    if scout_model == builder_model:
+        return (f"{scout_model} everywhere, depth: {turns}, ${cap}", None)
+    return (
+        f"{scout_model} scouts, {builder_model} builder,",
+        f"depth: {turns}, ${cap}",
+    )
 
 
 def _get_model_choices(runtime: str) -> list[tuple[str, str]]:
@@ -425,15 +458,27 @@ def _menu_runtime(current: str, _input: Callable | None) -> str:
 def _menu_preset(config: dict[str, str], _input: Callable | None) -> dict[str, str]:
     """Show effort preset menu. Returns updated config dict (in-place-style).
 
-    Preset descriptions use capability tiers; the diff before confirmation
-    shows the resolved model strings for the current runtime.
+    Each preset entry shows concrete resolved model names for the active
+    runtime and uses 'depth: N' instead of 'N turns' so the wording is
+    plain-language.  A footnote explains 'depth' at the bottom of the list.
+    The diff before confirmation shows resolved model strings.
     """
+    runtime = config.get("runtime", "claude")
+    # Number of chars before the summary text starts in "  (i) Label    — summary".
+    # Used to indent continuation lines so they align under the summary.
+    _CONT = " " * 17
     print("\nSelect effort level:")
     for i, preset_name in enumerate(PRESET_ORDER, start=1):
-        label, summary, use_for = PRESET_DESCRIPTIONS[preset_name]
-        print(f"  ({i}) {label:<8} — {summary}")
+        label, use_for = PRESET_DESCRIPTIONS[preset_name]
+        main_line, cont_line = _preset_summary(preset_name, runtime)
+        print(f"  ({i}) {label:<8} — {main_line}")
+        if cont_line:
+            print(f"{_CONT}{cont_line}")
         print(f"      Use for: {use_for}")
-    print(f"  ({len(PRESET_ORDER) + 1}) Custom  — set each parameter individually (existing menu)")
+    print(f"  ({len(PRESET_ORDER) + 1}) {'Custom':<8} — set each parameter individually")
+    print()
+    print("  * depth = reasoning steps before stopping.")
+    print("    More = thorough but slower and more expensive.")
     print()
 
     choice = _safe_input(f"Choice [1-{len(PRESET_ORDER) + 1}]: ", _input).strip()
@@ -445,7 +490,6 @@ def _menu_preset(config: dict[str, str], _input: Callable | None) -> dict[str, s
         if 1 <= idx <= len(PRESET_ORDER):
             preset_name = PRESET_ORDER[idx - 1]
             label = PRESET_DESCRIPTIONS[preset_name][0]
-            runtime = config.get("runtime", "claude")
             # Resolve tier names → concrete model strings for the current runtime
             resolved = resolve_preset(preset_name, runtime)
             # Show diff using resolved model strings
