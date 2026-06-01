@@ -74,6 +74,7 @@ def _run_single_task(
     conv: "ConvergenceConfig | None" = None,
     all_runtimes: "dict[str, Runtime] | None" = None,
     config: "Config | None" = None,
+    notifier=None,
 ) -> None:
     """Execute a single task, with checkpoint support for multi-stage tasks.
 
@@ -95,10 +96,10 @@ def _run_single_task(
     if task.stages:
         _run_staged_task(task, task_orch, queue, cp_store)
     else:
-        _run_atomic_task(task, task_orch, queue)
+        _run_atomic_task(task, task_orch, queue, notifier=notifier)
 
 
-def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue) -> None:
+def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue, *, notifier=None) -> None:
     """Run a task as a single orchestrator call, with exponential backoff on failure.
 
     Retries up to _TASK_MAX_RETRIES times (env: PRAXIS_TASK_MAX_RETRIES, default 3).
@@ -116,6 +117,25 @@ def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue) -> None:
             queue.update_status(task.id, "done", result=result)
             queue.write_result(task.id, result)
             sys.stderr.write(f"[praxis] task {task.id} done\n")
+            # Append to conversation log — best-effort
+            try:
+                from .memory.conversation_log import ConversationLog
+                from .config import Config as _Config
+                _cfg = _Config.from_env()
+                _log = ConversationLog(_cfg.workspace_root)
+                _log.append(
+                    prompt=task.prompt[:500],
+                    summary=result[:300] if result else "",
+                    outcome="success",
+                    task_type="queue_task",
+                )
+            except Exception:
+                pass
+            if notifier is not None:
+                try:
+                    notifier.notify_task_complete(task.prompt, "success", result)
+                except Exception:
+                    pass
             return
         except Exception as exc:
             last_exc = exc
@@ -133,6 +153,24 @@ def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue) -> None:
         f"[praxis] task {task.id} exhausted {_TASK_MAX_RETRIES} retries; moving to dead letter\n"
     )
     queue.move_to_dead_letter(task, error_str, _TASK_MAX_RETRIES)
+    try:
+        from .memory.conversation_log import ConversationLog
+        from .config import Config as _Config
+        _cfg = _Config.from_env()
+        _log = ConversationLog(_cfg.workspace_root)
+        _log.append(
+            prompt=task.prompt[:500],
+            summary=error_str[:300],
+            outcome="failed",
+            task_type="queue_task",
+        )
+    except Exception:
+        pass
+    if notifier is not None:
+        try:
+            notifier.notify_task_complete(task.prompt, "failed", error_str)
+        except Exception:
+            pass
 
 
 def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store: CheckpointStore) -> None:
@@ -280,7 +318,18 @@ def run_queue_loop(workspace: Path) -> None:
     if recovered:
         sys.stderr.write(f"[praxis] recovered {recovered} interrupted task(s)\n")
 
+    from .notifier import Notifier as _Notifier
+    _notifier = _Notifier(workspace)
+
     _start_scheduler_thread(queue, workspace)
+
+    import os as _os
+    if _os.environ.get("PRAXIS_MORNING_NOTIFY", "").lower() == "true":
+        _handoff = workspace / ".praxis" / "memory" / "morning-handoff.md"
+        try:
+            _notifier.notify_morning_handoff(_handoff)
+        except Exception:
+            pass
 
     max_concurrent = int(os.environ.get("PRAXIS_MAX_CONCURRENT_TASKS", "3"))
     sys.stderr.write(f"[praxis] queue loop started, polling every {poll_interval}s\n")
@@ -303,6 +352,16 @@ def run_queue_loop(workspace: Path) -> None:
             conv=conv,
             all_runtimes=all_runtimes,
             config=config,
+            notifier=_notifier,
         )
+
+    # Send shutdown notification
+    try:
+        _notifier.notify(
+            f"[Praxis] Shutting down. "
+            f"Session complete."
+        )
+    except Exception:
+        pass
 
     sys.stderr.write("[praxis] queue loop stopped\n")

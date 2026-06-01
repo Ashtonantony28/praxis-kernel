@@ -37,6 +37,8 @@ class Orchestrator:
         self.agent_modes = agent_modes or {}
         self.system_prompt = self._load_system_prompt()
         self.subagents = load_subagents(config.workspace_root / ".claude" / "agents")
+        from .memory.conversation_log import ConversationLog
+        self._conv_log = ConversationLog(config.workspace_root)
 
     def _load_system_prompt(self) -> str:
         path = self.config.workspace_root / "praxis-system-prompt.md"
@@ -56,6 +58,25 @@ class Orchestrator:
         import os
         model = model or os.environ.get("PRAXIS_MODEL", "claude-sonnet-4-6")
         all_schemas = get_tool_schemas() + get_integration_schemas()
+
+        # Prepend recent interactions to context (max 500 tokens ≈ 2000 chars)
+        _recent = self._conv_log.recent(5)
+        if _recent:
+            lines = []
+            total_chars = 0
+            for entry in _recent:
+                snippet = (
+                    f"- [{entry.get('ts','')[:10]}] {entry.get('task_type','task')}: "
+                    f"{entry.get('prompt','')[:120]} → {entry.get('outcome','')}"
+                )
+                if total_chars + len(snippet) > 2000:
+                    break
+                lines.append(snippet)
+                total_chars += len(snippet)
+            if lines:
+                history_block = "Recent interactions:\n" + "\n".join(lines)
+                user_message = history_block + "\n\n---\n\n" + user_message
+
         result = self.runtime.run_loop(
             model=model,
             system=self.system_prompt,
@@ -64,6 +85,8 @@ class Orchestrator:
             tool_executor=self._execute_with_hook,
             mode=mode,
         )
+
+        # Caller (Scribe / queue_runner) appends to conv_log after task.
 
         # Stage plan output when mode requires confirmation (e.g. plan mode)
         if mode is not None and mode.requires_confirmation:
