@@ -49,6 +49,11 @@ wiki/log.md
 .praxis/praxis.pid
 .praxis/schedule/*
 
+# WhatsApp bridge session — contains account credentials, never commit
+whatsapp-bridge/session/*
+!whatsapp-bridge/session/.gitkeep
+whatsapp-bridge/node_modules/
+
 # Claude Code local settings override
 .claude/settings.local.json
 

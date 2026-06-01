@@ -175,3 +175,36 @@ All Phase I Session 2 items delivered:
 - TASK-I2F4: orchestrator.py confidence gate (_run_confidence_check → planner JSON → _stage_low_confidence_plan → notify + awaiting_input plan file); default threshold=0 (disabled, opt-in); setup_wizard step 12/13
 - TASK-I2TESTS: 25 new tests (18 ambient + 7 confidence); 985 pre-existing tests all pass; CalendarMonitor datetime isolation via _get_now()
 - PRAXIS_CONFIDENCE_THRESHOLD default changed from 0.7 to 0 (disabled) to preserve backward compatibility; wizard and .env.example suggest 0.7
+
+### TASK-I3F5B (completed 2026-06-01)
+- praxis/integrations/whatsapp.py: WhatsAppAdapter; SSE listener thread; stage_reply (no bridge calls); send_or_stage autonomy gate; injection detection; from_env() classmethod
+- Mirrors telegram.py governance exactly: all sends staged unless autonomy gate passes
+- stdlib only (urllib.request, threading) — no new deps
+
+### TASK-I3F6A (completed 2026-06-01)
+- scripts/validate_setup.py: 9 integration checks (email/calendar/github/linear/notion/slack/telegram/whatsapp/web); pass/fail/skip with fix hints; run_validation() importable; CLI with --load-dotenv; stdlib only
+
+### TASK-I3F5A (completed 2026-06-01)
+- whatsapp-bridge/package.json: @whiskeysockets/baileys, express, qrcode-terminal deps
+- whatsapp-bridge/bridge.js: Baileys session, SSE stream, POST send, GET ping; binds 127.0.0.1 only; PRAXIS_WHATSAPP_ALLOWED_NUMBERS inbound filter; stderr-only logging of sender numbers
+- whatsapp-bridge/session/.gitkeep: placeholder (session/ added to .gitignore)
+- whatsapp-bridge/README.md: setup instructions (npm install must be run by user)
+
+### TASK-I3F5C+I3F6B (completed 2026-06-01)
+- praxis/setup_wizard.py: WhatsApp STEP 13/14 added (allowed numbers, bridge port, Node.js instructions); all step labels updated 1/13→1/14 through 12/13→12/14; validation call added at end; whatsapp_display in summary table
+- praxis/__main__.py: --whatsapp-listen mode (WhatsAppAdapter.from_env + SSE loop) and --validate mode (importlib loads scripts/validate_setup.py) added to _parse_mode() and main()
+- .env.example: WhatsApp bridge section appended
+
+### TASK-I3TESTS (completed 2026-06-01)
+- tests/test_whatsapp.py: 20 tests covering adapter init (defaults/stored config/allowed-set), start (bridge-not-running raises, bridge-running spawns thread), on_event (connected/allowed/non-allowed/injection phrase/case-insensitive/other phrase), stage_reply (writes JSON, creates dirs, no urlopen), send_or_stage (4 gate cases), from_env (reads env, uses defaults)
+- tests/test_validate_setup.py: 30 tests covering all 9 integration checks (skip/pass/fail branches each) + run_validation() returns dict with all check names + summary output + pass/fail/skip counts correct
+- Decision: on_event tests patch praxis.queue.Task (lazy import inside method); run_validation tests monkeypatch _CHECKS list directly (function refs captured at module load time, not re-looked up)
+
+### ORCHESTRATOR RECONCILE — Phase I Session 3 (2026-06-01)
+Full test suite: 1060 passed, 0 failed. Hook md5: 057f07f223fd5b5fe11f2aa50af1e361 unchanged.
+All Phase I Session 3 items delivered:
+- TASK-I3F5A: whatsapp-bridge/bridge.js — Baileys ESM bridge, SSE stream, POST /send, GET /ping; 127.0.0.1-only; PRAXIS_WHATSAPP_ALLOWED_NUMBERS filter; QR on first run; session gitignored
+- TASK-I3F5B: praxis/integrations/whatsapp.py — WhatsAppAdapter; SSE daemon thread; injection detection; allowed-numbers filter; stage_reply (zero network); send_or_stage autonomy gate; from_env(); stdlib only
+- TASK-I3F5C+I3F6B: setup_wizard.py STEP 13/14 WhatsApp; all 1/13-12/13 labels renumbered to 1/14-12/14; validation call at wizard end; __main__.py --whatsapp-listen + --validate; .env.example WhatsApp section
+- TASK-I3F6A: scripts/validate_setup.py — 9 checks (email/calendar/github/linear/notion/slack/telegram/whatsapp/web); pass/fail/skip table; run_validation() importable; CLI with --load-dotenv; stdlib only
+- TASK-I3TESTS: 20 WhatsApp + 30 validate_setup tests (50 new); 1010 pre-existing all pass; total 1060

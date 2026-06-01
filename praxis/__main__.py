@@ -536,6 +536,10 @@ def _parse_mode(argv: list[str]) -> str:
         return "approve_plan"
     if "--reject-plan" in argv:
         return "reject_plan"
+    if "--whatsapp-listen" in argv:
+        return "whatsapp_listen"
+    if "--validate" in argv:
+        return "validate"
     return "interactive"
 
 
@@ -977,6 +981,48 @@ def main() -> None:
             entry["status"] = "rejected"
             plan_file.write_text(_json.dumps(entry, indent=2), encoding="utf-8")
             print(f"Plan {plan_id} rejected.")
+
+        elif mode == "whatsapp_listen":
+            import os as _os
+            import time as _time
+            from .queue import TaskQueue
+            from .integrations.whatsapp import WhatsAppAdapter
+
+            config = Config.from_env()
+            allowed = _os.environ.get("PRAXIS_WHATSAPP_ALLOWED_NUMBERS", "")
+            if not allowed:
+                raise SystemExit(
+                    "[praxis] fatal: PRAXIS_WHATSAPP_ALLOWED_NUMBERS not set. "
+                    "Set it to a comma-separated list of allowed E.164 phone numbers in your .env file."
+                )
+            queue = TaskQueue(config.workspace_root / ".praxis" / "queue")
+            adapter = WhatsAppAdapter.from_env(queue=queue, config=config)
+            sys.stderr.write("[praxis] Starting WhatsApp bridge listener...\n")
+            adapter.start()
+            sys.stderr.write("[praxis] WhatsApp SSE listener running. Press Ctrl+C to stop.\n")
+            try:
+                while True:
+                    _time.sleep(1)
+            except KeyboardInterrupt:
+                adapter.stop()
+                sys.stderr.write("\n[praxis] WhatsApp listener stopped.\n")
+
+        elif mode == "validate":
+            import os as _os
+            import importlib.util as _importlib_util
+            from pathlib import Path as _Path
+
+            workspace_root = _Path(_os.environ.get("PRAXIS_WORKSPACE_ROOT", _os.getcwd()))
+            val_path = workspace_root / "scripts" / "validate_setup.py"
+            if not val_path.exists():
+                raise SystemExit(
+                    f"[praxis] scripts/validate_setup.py not found at {val_path}. "
+                    "Ensure you are running from the Praxis workspace root."
+                )
+            spec = _importlib_util.spec_from_file_location("validate_setup", str(val_path))
+            mod = _importlib_util.module_from_spec(spec)
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
+            mod.run_validation(workspace_root)
 
     except KeyboardInterrupt:
         sys.stderr.write("\n[praxis] interrupted.\n")

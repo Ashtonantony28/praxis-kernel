@@ -36,3 +36,12 @@
 - [x] TASK-I2F3: Ambient event monitoring — praxis/ambient.py (AmbientMonitor + 4 sources), queue_runner.py wiring, .env.example
 - [x] TASK-I2F4: Confidence-gated planning — praxis/orchestrator.py (_run_confidence_check, _stage_low_confidence_plan), setup_wizard.py STEP 12/13
 - [x] TASK-I2TESTS: Tests — tests/test_ambient.py (18 tests), tests/test_confidence.py (7 tests); full suite 1010 passed
+
+## Phase I Session 3 — WhatsApp bridge + connection validation
+
+- [x] TASK-I3F5A: WhatsApp Node.js bridge — whatsapp-bridge/bridge.js, whatsapp-bridge/package.json, whatsapp-bridge/session/.gitkeep, whatsapp-bridge/README.md
+- [x] TASK-I3F5B: WhatsApp Python adapter — praxis/integrations/whatsapp.py (WhatsAppAdapter + autonomy gate + injection detection)
+- [x] TASK-I3F5C: WhatsApp setup wizard step + __main__ flags — setup_wizard.py STEP 13/14, __main__.py --whatsapp-listen + --validate
+- [x] TASK-I3F6A: Connection validation script — scripts/validate_setup.py (9 checks, pass/fail/skip table)
+- [x] TASK-I3F6B: Wizard + __main__ validation integration — setup wizard asks "Run validation now?", --validate flag, .env.example WhatsApp section
+- [x] TASK-I3TESTS: Tests — tests/test_whatsapp.py (20 tests), tests/test_validate_setup.py (30 tests); full suite 1060 passed

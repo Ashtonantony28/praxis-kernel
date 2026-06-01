@@ -1,0 +1,18 @@
+{
+  "name": "praxis-whatsapp-bridge",
+  "version": "1.0.0",
+  "description": "Local WhatsApp bridge for Praxis via Baileys",
+  "main": "bridge.js",
+  "type": "module",
+  "scripts": {
+    "start": "node bridge.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "express": "^4.18.2",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
