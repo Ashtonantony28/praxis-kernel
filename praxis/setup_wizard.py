@@ -114,7 +114,7 @@ def run_wizard(
     # STEP 1 — Runtime selection
     # -----------------------------------------------------------------------
     try:
-        print("STEP 1/14 — Runtime")
+        print("STEP 1/17 — Runtime")
         print("Which runtime would you like to use?")
         print()
         print("  (1) Claude subscription OAuth     [flat cost, recommended]")
@@ -189,7 +189,7 @@ def run_wizard(
     # STEP 2 — Workspace confirmation
     # -----------------------------------------------------------------------
     try:
-        print("STEP 2/14 — Workspace")
+        print("STEP 2/17 — Workspace")
         print(f"Detected workspace root: {workspace_root}")
         ws_choice = _safe_input("Is this correct? [Y/n]: ", _input).strip().lower()
         if ws_choice == "n":
@@ -211,7 +211,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     slack_enabled = False
     try:
-        print("STEP 3/14 — Slack (optional)")
+        print("STEP 3/17 — Slack (optional)")
         print("Slack integration enables: notifications, phone control, remote approvals.")
         print("To set up, create a Slack app at https://api.slack.com/apps with:")
         print("  - Socket Mode enabled")
@@ -252,7 +252,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     github_enabled = False
     try:
-        print("STEP 4/14 — GitHub (optional)")
+        print("STEP 4/17 — GitHub (optional)")
         print("GitHub integration enables: PR listing, issue viewing, code diffs.")
         print("Create a Personal Access Token at: https://github.com/settings/tokens")
         print("  - Scopes: repo (for private repos) or public_repo (for public)")
@@ -269,11 +269,95 @@ def run_wizard(
     print()
 
     # -----------------------------------------------------------------------
-    # STEP 5 — Web search (optional)
+    # STEP 5a/17 — Linear (optional)
+    # -----------------------------------------------------------------------
+    linear_enabled = False
+    try:
+        print("STEP 5a/17 — Linear (optional)")
+        linear_choice = _safe_input("Do you want Linear integration? (y/n): ", _input).strip().lower()
+        if linear_choice == "y":
+            linear_enabled = True
+            print("  Get your API key at: linear.app → Settings → API →")
+            print("  Personal API keys → Create key")
+            linear_api_key = _safe_getpass("  PRAXIS_LINEAR_API_KEY: ", _getpass)
+            if linear_api_key:
+                env_data["PRAXIS_LINEAR_API_KEY"] = linear_api_key
+            # Additive domain append
+            current_domains = env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+            linear_domain = "api.linear.app"
+            if current_domains:
+                if linear_domain not in current_domains:
+                    env_data["PRAXIS_ALLOWED_DOMAINS"] = current_domains + "," + linear_domain
+            else:
+                env_data["PRAXIS_ALLOWED_DOMAINS"] = linear_domain
+    except Exception as exc:
+        print(f"  Warning: step 5a error ({exc}), continuing.")
+
+    print()
+
+    # -----------------------------------------------------------------------
+    # STEP 5b/17 — Notion (optional)
+    # -----------------------------------------------------------------------
+    notion_enabled = False
+    try:
+        print("STEP 5b/17 — Notion (optional)")
+        notion_choice = _safe_input("Do you want Notion integration? (y/n): ", _input).strip().lower()
+        if notion_choice == "y":
+            notion_enabled = True
+            print("  Get your token at: notion.so/my-integrations →")
+            print("  New integration → copy token")
+            print("  Then share at least one Notion page with your")
+            print("  integration (open page → Share → Invite integration)")
+            notion_token = _safe_getpass("  PRAXIS_NOTION_TOKEN: ", _getpass)
+            if notion_token:
+                env_data["PRAXIS_NOTION_TOKEN"] = notion_token
+            # Additive domain append
+            current_domains = env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+            notion_domain = "api.notion.com"
+            if current_domains:
+                if notion_domain not in current_domains:
+                    env_data["PRAXIS_ALLOWED_DOMAINS"] = current_domains + "," + notion_domain
+            else:
+                env_data["PRAXIS_ALLOWED_DOMAINS"] = notion_domain
+    except Exception as exc:
+        print(f"  Warning: step 5b error ({exc}), continuing.")
+
+    print()
+
+    # -----------------------------------------------------------------------
+    # STEP 5c/17 — Calendar (optional)
+    # -----------------------------------------------------------------------
+    calendar_enabled = False
+    try:
+        print("STEP 5c/17 — Calendar (optional)")
+        calendar_choice = _safe_input("Do you want Calendar integration? (y/n): ", _input).strip().lower()
+        if calendar_choice == "y":
+            calendar_enabled = True
+            print("  Get your iCal URL at: calendar.google.com →")
+            print("  Settings → your calendar → Integrate calendar →")
+            print("  copy 'Secret address in iCal format'")
+            calendar_url = _safe_input("  PRAXIS_CALENDAR_URL: ", _input).strip()
+            if calendar_url:
+                env_data["PRAXIS_CALENDAR_URL"] = calendar_url
+            # Additive domain append
+            current_domains = env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+            calendar_domain = "calendar.google.com"
+            if current_domains:
+                if calendar_domain not in current_domains:
+                    env_data["PRAXIS_ALLOWED_DOMAINS"] = current_domains + "," + calendar_domain
+            else:
+                env_data["PRAXIS_ALLOWED_DOMAINS"] = calendar_domain
+    except Exception as exc:
+        print(f"  Warning: step 5c error ({exc}), continuing.")
+
+    print()
+
+    # -----------------------------------------------------------------------
+    # STEP 8/17 — Web search (optional)
     # -----------------------------------------------------------------------
     web_enabled = False
     try:
-        print("STEP 5/14 — Web search (optional)")
+        print("STEP 8/17 — Web search (optional)")
         print("Web search uses the Brave Search API (free tier — no credit card required).")
         print("Sign up at: https://brave.com/search/api/")
         print("  - Free tier: 2000 queries/month")
@@ -298,7 +382,7 @@ def run_wizard(
             else:
                 env_data["PRAXIS_ALLOWED_DOMAINS"] = domains_input
     except Exception as exc:
-        print(f"  Warning: step 5 error ({exc}), continuing.")
+        print(f"  Warning: step 8 error ({exc}), continuing.")
 
     print()
 
@@ -307,7 +391,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     email_enabled = False
     try:
-        print("STEP 6/14 — Email (optional)")
+        print("STEP 9/17 — Email (optional)")
         print("Email integration provides read-only IMAP inbox access + local draft staging.")
         print("For Gmail: create an App Password at https://myaccount.google.com/apppasswords")
         print("  (requires 2-factor authentication)")
@@ -327,7 +411,7 @@ def run_wizard(
             if email_pass:
                 env_data["PRAXIS_EMAIL_PASSWORD"] = email_pass
     except Exception as exc:
-        print(f"  Warning: step 6 error ({exc}), continuing.")
+        print(f"  Warning: step 9 error ({exc}), continuing.")
 
     print()
 
@@ -336,7 +420,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     cost_cap = "2.00"
     try:
-        print("STEP 7/14 — Cost circuit breaker")
+        print("STEP 10/17 — Cost circuit breaker")
         print("Praxis will stop a session if estimated API cost exceeds this limit.")
         print("(For OAuth/subscription users, this is an estimate — no actual billing impact.)")
         print()
@@ -345,7 +429,7 @@ def run_wizard(
             cost_cap = cap_input
         env_data["PRAXIS_MAX_SESSION_COST"] = cost_cap
     except Exception as exc:
-        print(f"  Warning: step 7 error ({exc}), continuing.")
+        print(f"  Warning: step 10 error ({exc}), continuing.")
         env_data["PRAXIS_MAX_SESSION_COST"] = cost_cap
 
     print()
@@ -357,7 +441,7 @@ def run_wizard(
     briefing_task_id: str | None = None
     briefing_next_run: str | None = None
     try:
-        print("STEP 8/14 — Morning briefing (optional)")
+        print("STEP 11/17 — Morning briefing (optional)")
         print("A daily 7am briefing asks: 'wiki query: what are my priorities for today?'")
         print("Requires: pip install praxis[scheduler]")
         print()
@@ -389,16 +473,16 @@ def run_wizard(
             except Exception as exc:
                 print(f"  Warning: could not schedule briefing ({exc})")
     except Exception as exc:
-        print(f"  Warning: step 8 error ({exc}), continuing.")
+        print(f"  Warning: step 11 error ({exc}), continuing.")
 
     print()
 
     # -----------------------------------------------------------------------
-    # STEP 9 — Wiki seed (optional)
+    # STEP 12/17 — Wiki seed (optional)
     # -----------------------------------------------------------------------
     wiki_copied = 0
     try:
-        print("STEP 9/14 — Personal wiki seed (optional)")
+        print("STEP 12/17 — Personal wiki seed (optional)")
         print("Drop notes or documents into wiki/raw/ to seed your personal knowledge wiki.")
         print("Praxis will ingest them when you run: python -m praxis \"wiki ingest wiki/raw/\"")
         print()
@@ -432,15 +516,15 @@ def run_wizard(
                 else:
                     print("  No .md or .txt files found. Skipping.")
     except Exception as exc:
-        print(f"  Warning: step 9 error ({exc}), continuing.")
+        print(f"  Warning: step 12 error ({exc}), continuing.")
 
     print()
 
     # -----------------------------------------------------------------------
-    # STEP 10 — Default mode
+    # STEP 13/17 — Default mode
     # -----------------------------------------------------------------------
     try:
-        print("STEP 10/14 — Default mode")
+        print("STEP 13/17 — Default mode")
         print("Which mode should Praxis use by default?")
         print()
         print("  (1) build  [full access — default]")
@@ -466,7 +550,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     telegram_enabled = False
     try:
-        print("STEP 11/14 — Telegram (optional)")
+        print("STEP 14/17 — Telegram (optional)")
         print("Telegram integration receives inbound messages as Tasks and stages replies.")
         print("Replies are NEVER sent autonomously by default — they are staged for review.")
         print("To set up, create a bot via BotFather: https://t.me/BotFather → /newbot")
@@ -491,16 +575,16 @@ def run_wizard(
         else:
             print("  Skipping Telegram (can be configured later via .env and convergence.yaml).")
     except Exception as exc:
-        print(f"  Warning: step 11 error ({exc}), continuing.")
+        print(f"  Warning: step 14 error ({exc}), continuing.")
 
     print()
 
     # -----------------------------------------------------------------------
-    # STEP 12/14 — Confidence threshold (optional)
+    # STEP 15/17 — Confidence threshold (optional)
     # -----------------------------------------------------------------------
     confidence_threshold = "0.7"
     try:
-        print("STEP 12/14 — Confidence threshold (optional)")
+        print("STEP 15/17 — Confidence threshold (optional)")
         print("Before running a task, Praxis can ask its planner to rate task clarity.")
         print("If confidence is below the threshold, the plan is staged for your review.")
         print("  0.0 = disabled (always proceed; existing behaviour)")
@@ -522,7 +606,7 @@ def run_wizard(
         env_data["PRAXIS_CONFIDENCE_THRESHOLD"] = confidence_threshold
         print(f"  Confidence threshold: {confidence_threshold}")
     except Exception as exc:
-        print(f"  Warning: step 12 error ({exc}), continuing.")
+        print(f"  Warning: step 15 error ({exc}), continuing.")
         env_data["PRAXIS_CONFIDENCE_THRESHOLD"] = confidence_threshold
 
     print()
@@ -532,7 +616,7 @@ def run_wizard(
     # -----------------------------------------------------------------------
     whatsapp_enabled = False
     try:
-        print("STEP 13/14 — WhatsApp (optional)")
+        print("STEP 16/17 — WhatsApp (optional)")
         print("WhatsApp integration connects to a local Baileys bridge process.")
         print("IMPORTANT: Use a DEDICATED phone number — NOT your personal WhatsApp.")
         print("Setup requires Node.js 20+ installed on your system.")
@@ -561,12 +645,12 @@ def run_wizard(
         else:
             print("  Skipping WhatsApp (can be configured later via .env).")
     except Exception as exc:
-        print(f"  Warning: step 13 error ({exc}), continuing.")
+        print(f"  Warning: step 16 error ({exc}), continuing.")
 
     print()
 
     # -----------------------------------------------------------------------
-    # STEP 14/14 — Write .env and print summary
+    # STEP 17/17 — Write .env and print summary
     # -----------------------------------------------------------------------
     try:
         _write_env(env_file, env_data, _env_mode)
@@ -594,6 +678,9 @@ def run_wizard(
     email_display = "enabled" if email_enabled else "not configured"
     telegram_display = "enabled" if telegram_enabled else "not configured"
     whatsapp_display = "enabled" if whatsapp_enabled else "not configured"
+    linear_display = "enabled" if linear_enabled else "not configured"
+    notion_display = "enabled" if notion_enabled else "not configured"
+    calendar_display = "enabled" if calendar_enabled else "not configured"
     cost_display = f"${cost_cap}"
     briefing_display = "scheduled" if briefing_scheduled else "not scheduled"
     wiki_display = f"{wiki_copied} files" if wiki_copied > 0 else "skipped"
@@ -610,6 +697,9 @@ def run_wizard(
     print(f"  Email:      {email_display}")
     print(f"  Telegram:   {telegram_display}")
     print(f"  WhatsApp:   {whatsapp_display}")
+    print(f"  Linear:     {linear_display}")
+    print(f"  Notion:     {notion_display}")
+    print(f"  Calendar:   {calendar_display}")
     print(f"  Confidence: {confidence_threshold} threshold")
     print(f"  Cost cap:   {cost_display}")
     print(f"  Briefing:   {briefing_display}")

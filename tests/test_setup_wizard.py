@@ -49,13 +49,16 @@ def _skip_all_inputs(workspace_root: Path):
       2) workspace correct?          → "y"
       3) slack?                      → "n"
       4) github?                     → "n"
-      5) web search?                 → "n"
-      6) email?                      → "n"
-      7) cost cap                    → ""   (default 2.00)
-      8) morning briefing?           → "n"
-      9) wiki seed?                  → "n"
+      5a) linear?                    → "n"
+      5b) notion?                    → "n"
+      5c) calendar?                  → "n"
+      8) web search?                 → "n"
+      9) email?                      → "n"
+      10) cost cap                   → ""   (default 2.00)
+      11) morning briefing?          → "n"
+      12) wiki seed?                 → "n"
     """
-    _inp = make_input("1", "y", "n", "n", "n", "n", "", "n", "n")
+    _inp = make_input("1", "y", "n", "n", "n", "n", "n", "n", "n", "", "n", "n")
     _gp = make_getpass("tok")
     return _inp, _gp
 
@@ -108,7 +111,7 @@ class TestReadWriteEnv:
 
 class TestRuntimeChoice:
     def test_runtime_choice_1_claude_oauth(self, tmp_path):
-        _inp = make_input("1", "y", "n", "n", "n", "n", "", "n", "n")
+        _inp = make_input("1", "y", "n", "n", "n", "n", "n", "n", "n", "", "n", "n")
         _gp = make_getpass("my_oauth_token")
         env_data = {}
 
@@ -122,7 +125,7 @@ class TestRuntimeChoice:
         assert env_data.get("PRAXIS_RUNTIME") == "claude"
 
     def test_runtime_choice_2_gemini(self, tmp_path):
-        _inp = make_input("2", "y", "n", "n", "n", "n", "", "n", "n")
+        _inp = make_input("2", "y", "n", "n", "n", "n", "n", "n", "n", "", "n", "n")
         _gp = make_getpass("gemini_key_123")
         env_data = {}
 
@@ -144,7 +147,9 @@ class TestRuntimeChoice:
             "http://localhost:11434",   # base_url
             "llama3.2",                 # model
             "y",                        # workspace correct
-            "n", "n", "n", "n",        # slack/github/web/email
+            "n", "n",                   # slack, github
+            "n", "n", "n",             # linear, notion, calendar
+            "n", "n",                   # web, email
             "",                         # cost cap
             "n", "n",                  # briefing/wiki
         )
@@ -162,7 +167,7 @@ class TestRuntimeChoice:
         assert env_data.get("PRAXIS_LOCAL_MODEL") == "llama3.2"
 
     def test_runtime_choice_4_api_key(self, tmp_path):
-        _inp = make_input("4", "y", "n", "n", "n", "n", "", "n", "n")
+        _inp = make_input("4", "y", "n", "n", "n", "n", "n", "n", "n", "", "n", "n")
         _gp = make_getpass("sk-ant-api03-xyz")
         env_data = {}
 
@@ -201,7 +206,7 @@ class TestInvalidRuntimeChoice:
 
     def test_invalid_choice_accepts_on_second_try(self, tmp_path, capsys):
         """First input invalid, second input valid → continues and completes."""
-        _inp = make_input("9", "1", "y", "n", "n", "n", "n", "", "n", "n")
+        _inp = make_input("9", "1", "y", "n", "n", "n", "n", "n", "n", "n", "", "n", "n")
         _gp = make_getpass("tok")
         env_data = {}
 
@@ -254,7 +259,7 @@ class TestGetpassUsedForCredentials:
     def test_oauth_token_uses_getpass(self, tmp_path):
         """Runtime choice 1 — verify _getpass callback is called for the token."""
         getpass_mock = MagicMock(return_value="oauth_tok")
-        _inp = make_input("1", "y", "n", "n", "n", "n", "", "n", "n")
+        _inp = make_input("1", "y", "n", "n", "n", "n", "n", "n", "n", "", "n", "n")
 
         with patch("praxis.setup_wizard._write_env"):
             run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=getpass_mock)
@@ -264,8 +269,8 @@ class TestGetpassUsedForCredentials:
     def test_github_token_uses_getpass(self, tmp_path):
         """github choice 'y' — verify _getpass called for token."""
         getpass_mock = MagicMock(return_value="ghp_token123")
-        # choice 1, workspace y, slack n, github y, web n, email n, cost "", briefing n, wiki n
-        _inp = make_input("1", "y", "n", "y", "n", "n", "", "n", "n")
+        # choice 1, workspace y, slack n, github y, linear n, notion n, calendar n, web n, email n, cost "", briefing n, wiki n
+        _inp = make_input("1", "y", "n", "y", "n", "n", "n", "n", "n", "", "n", "n")
 
         with patch("praxis.setup_wizard._write_env"):
             run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=getpass_mock)
@@ -276,8 +281,8 @@ class TestGetpassUsedForCredentials:
     def test_email_password_uses_getpass(self, tmp_path):
         """email choice 'y' — verify _getpass called for password."""
         getpass_mock = MagicMock(return_value="app_password_xyz")
-        # choice 1, workspace y, slack n, github n, web n, email y (+ host, user), cost "", briefing n, wiki n
-        _inp = make_input("1", "y", "n", "n", "n", "y", "imap.gmail.com", "user@example.com", "", "n", "n")
+        # choice 1, workspace y, slack n, github n, linear n, notion n, calendar n, web n, email y (+ host, user), cost "", briefing n, wiki n
+        _inp = make_input("1", "y", "n", "n", "n", "n", "n", "n", "y", "imap.gmail.com", "user@example.com", "", "n", "n")
 
         with patch("praxis.setup_wizard._write_env"):
             run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=getpass_mock)
@@ -314,6 +319,9 @@ class TestOptionalSteps:
             slack_webhook,   # webhook_url (visible input)
             slack_app_token, # app_token (visible input)
             "n",             # github
+            "n",             # linear
+            "n",             # notion
+            "n",             # calendar
             "n",             # web
             "n",             # email
             "",              # cost cap
@@ -337,7 +345,7 @@ class TestOptionalSteps:
         assert "hooks.slack.com" in domains
 
     def test_github_sets_key_when_y(self, tmp_path):
-        _inp = make_input("1", "y", "n", "y", "n", "n", "", "n", "n")
+        _inp = make_input("1", "y", "n", "y", "n", "n", "n", "n", "n", "", "n", "n")
         _gp = make_getpass("oauth_tok", "ghp_github_token")
         env_data = {}
 
@@ -350,7 +358,7 @@ class TestOptionalSteps:
         assert env_data.get("GITHUB_TOKEN") == "ghp_github_token"
 
     def test_email_sets_keys_when_y(self, tmp_path):
-        _inp = make_input("1", "y", "n", "n", "n", "y", "imap.gmail.com", "me@example.com", "", "n", "n")
+        _inp = make_input("1", "y", "n", "n", "n", "n", "n", "n", "y", "imap.gmail.com", "me@example.com", "", "n", "n")
         _gp = make_getpass("oauth_tok", "app_pass")
         env_data = {}
 
@@ -366,7 +374,7 @@ class TestOptionalSteps:
 
     def test_web_search_sets_default_domain(self, tmp_path):
         # web "y", empty domain input → default api.search.brave.com
-        _inp = make_input("1", "y", "n", "n", "y", "", "n", "", "n", "n")
+        _inp = make_input("1", "y", "n", "n", "n", "n", "n", "y", "", "n", "", "n", "n")
         _gp = make_getpass("oauth_tok", "brave_key")
         env_data = {}
 
@@ -399,7 +407,7 @@ class TestCostCircuitBreaker:
 
     def test_custom_cost_cap(self, tmp_path):
         # provide "5.00" as cost cap answer
-        _inp = make_input("1", "y", "n", "n", "n", "n", "5.00", "n", "n")
+        _inp = make_input("1", "y", "n", "n", "n", "n", "n", "n", "n", "5.00", "n", "n")
         _gp = make_getpass("tok")
         env_data = {}
 
@@ -432,7 +440,7 @@ class TestWikiSeed:
         source_file.write_text("# My notes\nHello world\n", encoding="utf-8")
 
         # wiki "y", then path to source_file
-        _inp = make_input("1", "y", "n", "n", "n", "n", "", "n", "y", str(source_file))
+        _inp = make_input("1", "y", "n", "n", "n", "n", "n", "n", "n", "", "n", "y", str(source_file))
         _gp = make_getpass("tok")
 
         with patch("praxis.setup_wizard._write_env"):
@@ -475,6 +483,157 @@ class TestSummaryOutput:
 
         out = capsys.readouterr().out
         assert "WARNING: .env is NOT in .gitignore" in out
+
+
+# ===========================================================================
+# TestLinearStep
+# ===========================================================================
+
+class TestLinearStep:
+    def test_linear_skipped_writes_nothing(self, tmp_path):
+        """Skipping Linear writes no Linear keys."""
+        _inp, _gp = _skip_all_inputs(tmp_path)
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert "PRAXIS_LINEAR_API_KEY" not in env_data
+
+    def test_linear_enabled_writes_key_and_domain(self, tmp_path):
+        """Linear y → PRAXIS_LINEAR_API_KEY written; api.linear.app appended to domains."""
+        # 1=runtime, y=workspace, n=slack, n=github, y=linear, n=notion, n=calendar,
+        # n=web, n=email, ""=cost, n=briefing, n=wiki
+        _inp = make_input("1", "y", "n", "n", "y", "n", "n", "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok", "linear_key_abc")
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert env_data.get("PRAXIS_LINEAR_API_KEY") == "linear_key_abc"
+        assert "api.linear.app" in env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+
+    def test_linear_domain_not_duplicated(self, tmp_path):
+        """If api.linear.app already in PRAXIS_ALLOWED_DOMAINS, it is not duplicated."""
+        # Pre-seed .env with api.linear.app already present
+        env_file = tmp_path / ".env"
+        env_file.write_text("PRAXIS_ALLOWED_DOMAINS=api.linear.app\n", encoding="utf-8")
+
+        _inp = make_input("1", "y", "n", "n", "y", "n", "n", "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok", "linear_key_abc")
+
+        run_wizard(tmp_path, env_file=env_file, _input=_inp, _getpass=_gp)
+
+        result = _read_env(env_file)
+        domains = result.get("PRAXIS_ALLOWED_DOMAINS", "")
+        # Should appear exactly once
+        assert domains.count("api.linear.app") == 1
+
+
+# ===========================================================================
+# TestNotionStep
+# ===========================================================================
+
+class TestNotionStep:
+    def test_notion_skipped_writes_nothing(self, tmp_path):
+        """Skipping Notion writes no Notion keys."""
+        _inp, _gp = _skip_all_inputs(tmp_path)
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert "PRAXIS_NOTION_TOKEN" not in env_data
+
+    def test_notion_enabled_writes_token_and_domain(self, tmp_path):
+        """Notion y → PRAXIS_NOTION_TOKEN written; api.notion.com appended to domains."""
+        _inp = make_input("1", "y", "n", "n", "n", "y", "n", "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok", "notion_secret_xyz")
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert env_data.get("PRAXIS_NOTION_TOKEN") == "notion_secret_xyz"
+        assert "api.notion.com" in env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+
+    def test_notion_domain_not_duplicated(self, tmp_path):
+        """If api.notion.com already in PRAXIS_ALLOWED_DOMAINS, it is not duplicated."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("PRAXIS_ALLOWED_DOMAINS=api.notion.com\n", encoding="utf-8")
+
+        _inp = make_input("1", "y", "n", "n", "n", "y", "n", "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok", "notion_secret_xyz")
+
+        run_wizard(tmp_path, env_file=env_file, _input=_inp, _getpass=_gp)
+
+        result = _read_env(env_file)
+        domains = result.get("PRAXIS_ALLOWED_DOMAINS", "")
+        assert domains.count("api.notion.com") == 1
+
+
+# ===========================================================================
+# TestCalendarStep
+# ===========================================================================
+
+class TestCalendarStep:
+    def test_calendar_skipped_writes_nothing(self, tmp_path):
+        """Skipping Calendar writes no Calendar keys."""
+        _inp, _gp = _skip_all_inputs(tmp_path)
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert "PRAXIS_CALENDAR_URL" not in env_data
+
+    def test_calendar_enabled_writes_url_and_domain(self, tmp_path):
+        """Calendar y → PRAXIS_CALENDAR_URL written; calendar.google.com appended to domains."""
+        cal_url = "https://calendar.google.com/calendar/ical/secret/basic.ics"
+        # 1=runtime, y=ws, n=slack, n=github, n=linear, n=notion, y=calendar (url), n=web, n=email, ""=cost, n=brief, n=wiki
+        _inp = make_input("1", "y", "n", "n", "n", "n", "y", cal_url, "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok")
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert env_data.get("PRAXIS_CALENDAR_URL") == cal_url
+        assert "calendar.google.com" in env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+
+    def test_calendar_domain_not_duplicated(self, tmp_path):
+        """If calendar.google.com already present in PRAXIS_ALLOWED_DOMAINS, not duplicated."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("PRAXIS_ALLOWED_DOMAINS=calendar.google.com\n", encoding="utf-8")
+
+        cal_url = "https://calendar.google.com/calendar/ical/secret/basic.ics"
+        _inp = make_input("1", "y", "n", "n", "n", "n", "y", cal_url, "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok")
+
+        run_wizard(tmp_path, env_file=env_file, _input=_inp, _getpass=_gp)
+
+        result = _read_env(env_file)
+        domains = result.get("PRAXIS_ALLOWED_DOMAINS", "")
+        assert domains.count("calendar.google.com") == 1
 
 
 # ===========================================================================
