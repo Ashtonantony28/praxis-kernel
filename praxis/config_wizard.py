@@ -11,6 +11,7 @@ Writes:
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Callable
@@ -34,76 +35,164 @@ DEFAULTS: dict[str, str] = {
 
 ROLES = ["orchestrator", "builder", "reviewer", "scout", "scribe"]
 
-MODEL_CHOICES = [
-    ("claude-opus-4-7",   "strongest reasoning, slowest, highest cost"),
-    ("claude-sonnet-4-6", "balanced, recommended for most tasks"),
-    ("claude-haiku-4-5",  "fastest, cheapest, good for simple tasks"),
-    ("gemini-2.5-flash",  "free tier, OpenAI-compatible"),
-    ("llama3.1:8b",       "local via Ollama, completely free"),
-]
+# ---------------------------------------------------------------------------
+# Runtime-agnostic tier system
+# ---------------------------------------------------------------------------
 
+# Capability tiers per runtime → concrete model strings.
+# Tiers: "fast", "balanced", "powerful"
+TIER_MODELS: dict[str, dict[str, str]] = {
+    "claude": {
+        "fast":     "claude-haiku-4-5-20251001",
+        "balanced": "claude-sonnet-4-6",
+        "powerful": "claude-opus-4-7",
+    },
+    # cloud and local: all tiers resolve to a single env-configured model.
+    # Actual resolution happens at runtime via _resolve_tier().
+}
+
+CLOUD_MODEL_FALLBACK = "gemini-2.5-flash"
+LOCAL_MODEL_FALLBACK  = "llama3.1:8b"
+
+# Effort presets expressed as capability tiers (runtime-agnostic).
+# Values for role keys are tier names: "fast" | "balanced" | "powerful".
+# "max_turns" and "cost_cap" are numeric strings (unchanged from before).
 PRESETS: dict[str, dict[str, str]] = {
     "minimal": {
-        "orchestrator": "claude-haiku-4-5",
-        "builder":      "claude-haiku-4-5",
-        "reviewer":     "claude-haiku-4-5",
-        "scout":        "claude-haiku-4-5",
-        "scribe":       "claude-haiku-4-5",
+        "orchestrator": "fast",
+        "builder":      "fast",
+        "reviewer":     "fast",
+        "scout":        "fast",
+        "scribe":       "fast",
         "max_turns":    "20",
         "cost_cap":     "1.00",
     },
     "low": {
-        "orchestrator": "claude-sonnet-4-6",
-        "builder":      "claude-sonnet-4-6",
-        "reviewer":     "claude-haiku-4-5",
-        "scout":        "claude-haiku-4-5",
-        "scribe":       "claude-haiku-4-5",
+        "orchestrator": "balanced",
+        "builder":      "balanced",
+        "reviewer":     "fast",
+        "scout":        "fast",
+        "scribe":       "fast",
         "max_turns":    "40",
         "cost_cap":     "2.00",
     },
     "medium": {
-        "orchestrator": "claude-sonnet-4-6",
-        "builder":      "claude-sonnet-4-6",
-        "reviewer":     "claude-sonnet-4-6",
-        "scout":        "claude-sonnet-4-6",
-        "scribe":       "claude-sonnet-4-6",
+        "orchestrator": "balanced",
+        "builder":      "balanced",
+        "reviewer":     "balanced",
+        "scout":        "balanced",
+        "scribe":       "balanced",
         "max_turns":    "80",
         "cost_cap":     "5.00",
     },
     "high": {
-        "orchestrator": "claude-opus-4-7",
-        "builder":      "claude-opus-4-7",
-        "reviewer":     "claude-sonnet-4-6",
-        "scout":        "claude-sonnet-4-6",
-        "scribe":       "claude-sonnet-4-6",
+        "orchestrator": "powerful",
+        "builder":      "powerful",
+        "reviewer":     "balanced",
+        "scout":        "balanced",
+        "scribe":       "balanced",
         "max_turns":    "120",
         "cost_cap":     "10.00",
     },
     "max": {
-        "orchestrator": "claude-opus-4-7",
-        "builder":      "claude-opus-4-7",
-        "reviewer":     "claude-opus-4-7",
-        "scout":        "claude-opus-4-7",
-        "scribe":       "claude-opus-4-7",
+        "orchestrator": "powerful",
+        "builder":      "powerful",
+        "reviewer":     "powerful",
+        "scout":        "powerful",
+        "scribe":       "powerful",
         "max_turns":    "200",
         "cost_cap":     "20.00",
     },
 }
 
+# Human-readable descriptions — tier-based language, not model names.
 PRESET_DESCRIPTIONS = {
-    "minimal": ("Minimal", "Haiku everywhere, 20 turns, $1.00 cap",
+    "minimal": ("Minimal", "Fast tier everywhere, 20 turns, $1.00 cap",
                  "simple queries, wiki lookups, status checks"),
-    "low":     ("Low",     "Haiku scouts, Sonnet builder, 40 turns, $2.00 cap",
+    "low":     ("Low",     "Fast scouts, Balanced builder, 40 turns, $2.00 cap",
                  "routine tasks, dependency audits, summaries"),
-    "medium":  ("Medium",  "Sonnet everywhere, 80 turns, $5.00 cap",
+    "medium":  ("Medium",  "Balanced everywhere, 80 turns, $5.00 cap",
                  "most development work, code review, planning"),
-    "high":    ("High",    "Sonnet scouts, Opus builder, 120 turns, $10.00 cap",
+    "high":    ("High",    "Balanced scouts, Powerful builder, 120 turns, $10.00 cap",
                  "complex refactors, architecture decisions"),
-    "max":     ("Max",     "Opus everywhere, 200 turns, $20.00 cap",
+    "max":     ("Max",     "Powerful everywhere, 200 turns, $20.00 cap",
                  "hardest problems, security audits, major design"),
 }
 
 PRESET_ORDER = ["minimal", "low", "medium", "high", "max"]
+
+# Legacy flat model list kept for reference; prefer _get_model_choices(runtime).
+MODEL_CHOICES = [
+    ("claude-opus-4-7",          "strongest reasoning, slowest, highest cost"),
+    ("claude-sonnet-4-6",        "balanced, recommended for most tasks"),
+    ("claude-haiku-4-5-20251001","fastest, cheapest, good for simple tasks"),
+    ("gemini-2.5-flash",         "free tier, OpenAI-compatible"),
+    ("llama3.1:8b",              "local via Ollama, completely free"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Tier resolution
+# ---------------------------------------------------------------------------
+
+def _resolve_tier(tier: str, runtime: str) -> str:
+    """Return the concrete model string for *tier* on *runtime*.
+
+    - claude:  looked up in TIER_MODELS["claude"]
+    - cloud:   PRAXIS_CLOUD_MODEL env var, fallback gemini-2.5-flash
+    - local:   PRAXIS_LOCAL_MODEL env var, fallback llama3.1:8b
+    """
+    if runtime == "claude":
+        return TIER_MODELS["claude"][tier]
+    if runtime == "cloud":
+        return os.environ.get("PRAXIS_CLOUD_MODEL", CLOUD_MODEL_FALLBACK)
+    # local (or unknown)
+    return os.environ.get("PRAXIS_LOCAL_MODEL", LOCAL_MODEL_FALLBACK)
+
+
+def resolve_preset(preset_name: str, runtime: str) -> dict[str, str]:
+    """Return a preset config dict with tier values resolved to model strings.
+
+    Non-role keys (max_turns, cost_cap) are passed through unchanged.
+    """
+    preset = PRESETS[preset_name]
+    resolved: dict[str, str] = {}
+    for key, val in preset.items():
+        if key in ROLES:
+            resolved[key] = _resolve_tier(val, runtime)
+        else:
+            resolved[key] = val
+    return resolved
+
+
+def _get_model_choices(runtime: str) -> list[tuple[str, str]]:
+    """Return an ordered model-choice list for *runtime*.
+
+    The current runtime's primary model appears first so the user sees
+    the most relevant option at position (1).
+    """
+    claude_choices: list[tuple[str, str]] = [
+        ("claude-opus-4-7",          "strongest reasoning, slowest, highest cost"),
+        ("claude-sonnet-4-6",        "balanced, recommended for most tasks"),
+        ("claude-haiku-4-5-20251001","fastest, cheapest, good for simple tasks"),
+    ]
+    cloud_entry: tuple[str, str] = ("gemini-2.5-flash", "free tier, OpenAI-compatible")
+    local_entry: tuple[str, str] = ("llama3.1:8b",      "local via Ollama, completely free")
+
+    if runtime == "cloud":
+        primary = os.environ.get("PRAXIS_CLOUD_MODEL", cloud_entry[0])
+        primary_entry = (primary, f"current cloud model (PRAXIS_CLOUD_MODEL)")
+        extras = [c for c in [cloud_entry] if c[0] != primary]
+        return [primary_entry] + extras + claude_choices + [local_entry]
+
+    if runtime == "local":
+        primary = os.environ.get("PRAXIS_LOCAL_MODEL", local_entry[0])
+        primary_entry = (primary, f"current local model (PRAXIS_LOCAL_MODEL)")
+        extras = [c for c in [local_entry] if c[0] != primary]
+        return [primary_entry] + extras + claude_choices + [cloud_entry]
+
+    # claude (default)
+    return claude_choices + [cloud_entry, local_entry]
 
 
 # ---------------------------------------------------------------------------
@@ -256,23 +345,27 @@ def _load_current_config(
 # Sub-menus
 # ---------------------------------------------------------------------------
 
-def _menu_model(role: str, current: str, _input: Callable | None) -> str:
-    """Prompt user to pick a model for a given role. Returns new model string."""
+def _menu_model(role: str, current: str, runtime: str, _input: Callable | None) -> str:
+    """Prompt user to pick a model for a given role. Returns new model string.
+
+    The choice list is ordered so the current runtime's primary model appears first.
+    """
+    choices = _get_model_choices(runtime)
     print(f"\nSelect model for {role}:")
-    for i, (model, desc) in enumerate(MODEL_CHOICES, start=1):
-        print(f"  ({i}) {model:<22} — {desc}")
-    print(f"  ({len(MODEL_CHOICES) + 1}) custom              — type your own model string")
+    for i, (model, desc) in enumerate(choices, start=1):
+        print(f"  ({i}) {model:<30} — {desc}")
+    print(f"  ({len(choices) + 1}) custom              — type your own model string")
     print(f"  (Enter) keep current  [{current}]")
 
-    choice = _safe_input(f"Choice [1-{len(MODEL_CHOICES) + 1}]: ", _input).strip()
+    choice = _safe_input(f"Choice [1-{len(choices) + 1}]: ", _input).strip()
     if not choice:
         return current
 
     if choice.isdigit():
         idx = int(choice)
-        if 1 <= idx <= len(MODEL_CHOICES):
-            return MODEL_CHOICES[idx - 1][0]
-        if idx == len(MODEL_CHOICES) + 1:
+        if 1 <= idx <= len(choices):
+            return choices[idx - 1][0]
+        if idx == len(choices) + 1:
             custom = _safe_input("  Enter model string: ", _input).strip()
             return custom if custom else current
     print("  Invalid choice, keeping current.")
@@ -330,7 +423,11 @@ def _menu_runtime(current: str, _input: Callable | None) -> str:
 
 
 def _menu_preset(config: dict[str, str], _input: Callable | None) -> dict[str, str]:
-    """Show effort preset menu. Returns updated config dict (in-place-style)."""
+    """Show effort preset menu. Returns updated config dict (in-place-style).
+
+    Preset descriptions use capability tiers; the diff before confirmation
+    shows the resolved model strings for the current runtime.
+    """
     print("\nSelect effort level:")
     for i, preset_name in enumerate(PRESET_ORDER, start=1):
         label, summary, use_for = PRESET_DESCRIPTIONS[preset_name]
@@ -347,11 +444,13 @@ def _menu_preset(config: dict[str, str], _input: Callable | None) -> dict[str, s
         idx = int(choice)
         if 1 <= idx <= len(PRESET_ORDER):
             preset_name = PRESET_ORDER[idx - 1]
-            preset = PRESETS[preset_name]
             label = PRESET_DESCRIPTIONS[preset_name][0]
-            # Show diff
+            runtime = config.get("runtime", "claude")
+            # Resolve tier names → concrete model strings for the current runtime
+            resolved = resolve_preset(preset_name, runtime)
+            # Show diff using resolved model strings
             print(f"\n  Applying {label} preset:")
-            for key, new_val in preset.items():
+            for key, new_val in resolved.items():
                 old_val = config.get(key, DEFAULTS.get(key, ""))
                 if key == "cost_cap":
                     old_display = f"${old_val}"
@@ -369,9 +468,9 @@ def _menu_preset(config: dict[str, str], _input: Callable | None) -> dict[str, s
                 print("  Preset not applied.")
                 return config
 
-            # Apply preset
+            # Apply the resolved (concrete model string) values
             updated = dict(config)
-            for key, val in preset.items():
+            for key, val in resolved.items():
                 updated[key] = val
             updated["effort_preset"] = preset_name
             return updated
@@ -476,7 +575,7 @@ def run_config_wizard(
         # Model items 1–5
         if choice in ("1", "2", "3", "4", "5"):
             role = ROLES[int(choice) - 1]
-            config[role] = _menu_model(role, config[role], _input)
+            config[role] = _menu_model(role, config[role], config.get("runtime", "claude"), _input)
 
         elif choice == "6":
             config["max_turns"] = _menu_max_turns(config["max_turns"], _input)

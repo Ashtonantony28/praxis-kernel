@@ -18,6 +18,7 @@ from praxis.config_wizard import (
     _read_env,
     _update_env,
     _write_convergence_agents,
+    resolve_preset,
     run_config_wizard,
 )
 
@@ -404,3 +405,61 @@ def test_print_summary_after_done(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Configuration saved." in out
     assert "Effective configuration:" in out
+
+
+# ===========================================================================
+# Tests 25–27: Runtime-agnostic preset resolution
+# ===========================================================================
+
+def test_resolve_preset_claude_runtime():
+    """resolve_preset returns Claude model strings for the 'claude' runtime."""
+    resolved = resolve_preset("medium", "claude")
+    # medium = balanced everywhere
+    assert resolved["orchestrator"] == "claude-sonnet-4-6"
+    assert resolved["builder"]      == "claude-sonnet-4-6"
+    assert resolved["scout"]        == "claude-sonnet-4-6"
+    assert resolved["max_turns"]    == "80"
+    assert resolved["cost_cap"]     == "5.00"
+    # high preset: powerful orchestrator + builder
+    high = resolve_preset("high", "claude")
+    assert high["orchestrator"] == "claude-opus-4-7"
+    assert high["builder"]      == "claude-opus-4-7"
+    assert high["reviewer"]     == "claude-sonnet-4-6"
+
+
+def test_resolve_preset_cloud_runtime(monkeypatch):
+    """resolve_preset uses PRAXIS_CLOUD_MODEL for all tiers on the 'cloud' runtime.
+
+    Falls back to gemini-2.5-flash when the env var is absent.
+    """
+    monkeypatch.setenv("PRAXIS_CLOUD_MODEL", "gpt-4o-mini")
+    resolved = resolve_preset("high", "cloud")
+    # All roles must resolve to the env-configured cloud model
+    assert resolved["orchestrator"] == "gpt-4o-mini"
+    assert resolved["builder"]      == "gpt-4o-mini"
+    assert resolved["reviewer"]     == "gpt-4o-mini"
+    assert resolved["max_turns"]    == "120"
+
+    # Fallback when PRAXIS_CLOUD_MODEL is unset
+    monkeypatch.delenv("PRAXIS_CLOUD_MODEL", raising=False)
+    fallback = resolve_preset("medium", "cloud")
+    assert fallback["orchestrator"] == "gemini-2.5-flash"
+    assert fallback["builder"]      == "gemini-2.5-flash"
+
+
+def test_resolve_preset_local_runtime(monkeypatch):
+    """resolve_preset uses PRAXIS_LOCAL_MODEL for all tiers on the 'local' runtime.
+
+    Falls back to llama3.1:8b when the env var is absent.
+    """
+    monkeypatch.setenv("PRAXIS_LOCAL_MODEL", "mistral:7b")
+    resolved = resolve_preset("minimal", "local")
+    assert resolved["orchestrator"] == "mistral:7b"
+    assert resolved["builder"]      == "mistral:7b"
+    assert resolved["max_turns"]    == "20"
+    assert resolved["cost_cap"]     == "1.00"
+
+    # Fallback when PRAXIS_LOCAL_MODEL is unset
+    monkeypatch.delenv("PRAXIS_LOCAL_MODEL", raising=False)
+    fallback = resolve_preset("minimal", "local")
+    assert fallback["orchestrator"] == "llama3.1:8b"
