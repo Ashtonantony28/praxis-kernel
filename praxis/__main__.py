@@ -559,6 +559,8 @@ def _parse_mode(argv: list[str]) -> str:
         return "whatsapp_listen"
     if "--validate" in argv:
         return "validate"
+    if "--rebuild-memory-index" in argv:
+        return "rebuild_memory_index"
     return "interactive"
 
 
@@ -1048,6 +1050,23 @@ def main() -> None:
             mod = _importlib_util.module_from_spec(spec)
             spec.loader.exec_module(mod)  # type: ignore[union-attr]
             mod.run_validation(workspace_root)
+
+        elif mode == "rebuild_memory_index":
+            import os as _os
+            from pathlib import Path as _Path
+            from .memory_store import get_memory_store as _get_memory_store
+
+            workspace_root = _Path(_os.environ.get("PRAXIS_WORKSPACE_ROOT", _os.getcwd()))
+            wiki_root = workspace_root / "wiki"
+            store = _get_memory_store(workspace_root)
+            if store is None:
+                print(
+                    "Semantic memory not enabled. "
+                    "Set PRAXIS_SEMANTIC_MEMORY=true and install: pip install praxis[semantic]"
+                )
+            else:
+                count = store.rebuild_index(wiki_root)
+                print(f"Indexed {count} pages.")
 
     except KeyboardInterrupt:
         sys.stderr.write("\n[praxis] interrupted.\n")

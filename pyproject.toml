@@ -38,6 +38,10 @@ playwright = [
 scheduler = [
     "croniter>=1.0",
 ]
+semantic = [
+    "chromadb>=0.4",
+    "sentence-transformers>=2.2",
+]
 dev = [
     "pytest>=8.0",
 ]
@@ -49,6 +53,7 @@ all = [
     "praxis[mcp]",
     "praxis[playwright]",
     "praxis[scheduler]",
+    "praxis[semantic]",
     "praxis[dev]",
 ]
 

@@ -555,3 +555,142 @@ def test_resolve_model_substitutes_claude(mock_openai):
     assert rt._resolve_model("claude-haiku-4-5-20251001") == "gemini-2.5-flash"
     assert rt._resolve_model("claude-sonnet-4-6") == "gemini-2.5-flash"
     assert rt._resolve_model("claude-opus-4-6") == "gemini-2.5-flash"
+
+
+# ---------- _maybe_compact: token-based compaction ----------
+
+
+def _make_summary_response(text: str = "Summary") -> FakeCompletion:
+    return FakeCompletion(choices=[FakeChoice(message=FakeMessage(content=text))])
+
+
+def _make_rt_above_threshold(
+    monkeypatch, *, model: str = "gpt-4o", threshold: str = "0.8"
+) -> OpenAICloudRuntime:
+    from praxis.runtime.openai_base import _OPENAI_MODEL_CONTEXT_LIMITS, _OPENAI_DEFAULT_CONTEXT_LIMIT
+    monkeypatch.setenv("PRAXIS_COMPACTION_THRESHOLD", threshold)
+    max_ctx = _OPENAI_MODEL_CONTEXT_LIMITS.get(model, _OPENAI_DEFAULT_CONTEXT_LIMIT)
+    tokens = int(max_ctx * float(threshold)) + 1
+    # Supply one summary response for the compaction call
+    client = FakeOpenAIClient([_make_summary_response("OpenAI summary")])
+    rt = OpenAICloudRuntime(client, default_model=model, base_url="https://api.openai.com/v1")
+    rt._cost_breaker = MagicMock()
+    rt._session_tokens = tokens
+    return rt
+
+
+def test_openai_runtime_compaction_triggered(monkeypatch):
+    """_maybe_compact fires when _session_tokens >= threshold * max_ctx."""
+    rt = _make_rt_above_threshold(monkeypatch)
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "ok"},
+    ]
+    with patch("praxis.event_bus.get_event_bus"):
+        result = rt._maybe_compact(msgs, system="sys", model="gpt-4o")
+
+    assert result is not msgs  # rebuilt
+    assert rt._session_tokens == 0  # reset
+
+
+def test_openai_compaction_not_triggered_below_threshold(monkeypatch):
+    """_maybe_compact returns unchanged messages when below threshold."""
+    from praxis.runtime.openai_base import _OPENAI_DEFAULT_CONTEXT_LIMIT
+    monkeypatch.setenv("PRAXIS_COMPACTION_THRESHOLD", "0.9")
+    client = FakeOpenAIClient([])
+    rt = OpenAICloudRuntime(client, default_model="gpt-4o", base_url="http://x")
+    rt._session_tokens = 100  # far below 128_000 * 0.9
+    msgs = [{"role": "user", "content": "hi"}]
+    result = rt._maybe_compact(msgs, system="sys", model="unknown-model")
+    assert result is msgs  # unchanged
+
+
+def test_openai_compaction_rebuilt_history_starts_with_system(monkeypatch):
+    """Rebuilt history preserves system message at position 0."""
+    rt = _make_rt_above_threshold(monkeypatch)
+    msgs = [
+        {"role": "system", "content": "you are helpful"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "done"},
+    ]
+    with patch("praxis.event_bus.get_event_bus"):
+        result = rt._maybe_compact(msgs, system="you are helpful", model="gpt-4o")
+
+    assert result[0]["role"] == "system"
+
+
+def test_openai_compaction_summary_in_rebuilt_history(monkeypatch):
+    """Summary text appears in the rebuilt messages."""
+    rt = _make_rt_above_threshold(monkeypatch)
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "result"},
+    ]
+    with patch("praxis.event_bus.get_event_bus"):
+        result = rt._maybe_compact(msgs, system="sys", model="gpt-4o")
+
+    full_text = " ".join(m.get("content", "") for m in result)
+    assert "OpenAI summary" in full_text
+
+
+def test_openai_compaction_tokens_reset(monkeypatch):
+    """_session_tokens is reset to 0 after successful compaction."""
+    rt = _make_rt_above_threshold(monkeypatch)
+    rt._maybe_compact(
+        [{"role": "user", "content": "x"}],
+        system="sys",
+        model="gpt-4o",
+    )
+    assert rt._session_tokens == 0
+
+
+def test_openai_compaction_returns_unchanged_on_api_failure(monkeypatch):
+    """On LLM failure, returns original messages unchanged."""
+    from praxis.runtime.openai_base import _OPENAI_DEFAULT_CONTEXT_LIMIT
+    monkeypatch.setenv("PRAXIS_COMPACTION_THRESHOLD", "0.1")
+    client = FakeOpenAIClient([])
+    rt = OpenAICloudRuntime(client, default_model="gpt-4o", base_url="http://x")
+    rt._cost_breaker = MagicMock()
+    rt._session_tokens = 999_999_999  # far above threshold
+
+    # Inject an exception into _call_api
+    with patch.object(rt, "_call_api", side_effect=RuntimeError("API down")):
+        msgs = [{"role": "user", "content": "original"}]
+        result = rt._maybe_compact(msgs, system="sys", model="gpt-4o")
+
+    assert result is msgs  # unchanged
+
+
+def test_openai_compaction_event_emitted(monkeypatch):
+    """COMPACTION_FIRED event is published on successful compaction."""
+    rt = _make_rt_above_threshold(monkeypatch)
+    msgs = [{"role": "user", "content": "task"}]
+
+    mock_bus = MagicMock()
+    with patch("praxis.event_bus.get_event_bus", return_value=mock_bus):
+        rt._maybe_compact(msgs, system="sys", model="gpt-4o")
+
+    mock_bus.publish_sync.assert_called_once()
+    payload = mock_bus.publish_sync.call_args[0][1]
+    assert payload["model"] == "gpt-4o"
+
+
+def test_openai_compaction_threshold_env_var_respected(monkeypatch):
+    """PRAXIS_COMPACTION_THRESHOLD=0.5 fires at 50% of context."""
+    from praxis.runtime.openai_base import _OPENAI_DEFAULT_CONTEXT_LIMIT
+    monkeypatch.setenv("PRAXIS_COMPACTION_THRESHOLD", "0.5")
+    tokens = int(_OPENAI_DEFAULT_CONTEXT_LIMIT * 0.6)  # above 0.5, below default 0.8
+
+    client = FakeOpenAIClient([_make_summary_response()])
+    rt = OpenAICloudRuntime(client, default_model="gpt-4o", base_url="http://x")
+    rt._cost_breaker = MagicMock()
+    rt._session_tokens = tokens
+
+    with patch("praxis.event_bus.get_event_bus"):
+        result = rt._maybe_compact(
+            [{"role": "user", "content": "x"}], system="sys", model="unknown-model"
+        )
+
+    assert rt._session_tokens == 0  # compaction fired

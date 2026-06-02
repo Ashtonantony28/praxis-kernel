@@ -1591,6 +1591,29 @@ def ingest(
         except Exception as exc:
             report.errors.append(f"index rebuild failed: {exc}")
 
+    # ------------------------------------------------------------------
+    # Embed changed pages into semantic memory (if PRAXIS_SEMANTIC_MEMORY=true)
+    # ------------------------------------------------------------------
+    _embed_paths = [
+        e.page_path for e in report.events
+        if e.kind in ("created", "updated", "superseded")
+    ]
+    if _embed_paths:
+        try:
+            from .memory_store import get_memory_store as _get_memory_store  # lazy import
+            _mem_store = _get_memory_store(wiki_root.parent)
+            if _mem_store is not None:
+                for _page_path in _embed_paths:
+                    try:
+                        _content = _page_path.read_text(encoding="utf-8")
+                        _meta, _ = _parse_frontmatter(_content)
+                        _slug = _page_path.stem
+                        _mem_store.embed_wiki_page(_slug, _content, _meta)
+                    except Exception:
+                        pass
+        except ImportError:
+            pass
+
     return report
 
 

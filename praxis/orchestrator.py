@@ -88,9 +88,28 @@ class Orchestrator:
                 history_block = "Recent interactions:\n" + "\n".join(lines)
                 user_message = history_block + "\n\n---\n\n" + user_message
 
+        # Prepend semantic memory context — AFTER §5 governance block, before LLM call.
+        # get_memory_store() returns None when PRAXIS_SEMANTIC_MEMORY != 'true' or deps absent.
+        from .memory_store import get_memory_store as _get_memory_store  # lazy import
+        _top_k = int(os.environ.get("PRAXIS_SEMANTIC_TOP_K", "6"))
+        _mem_store = _get_memory_store(self.config.workspace_root)
+        _system = self.system_prompt
+        if _mem_store is not None:
+            try:
+                _results = _mem_store.search(user_message, top_k=_top_k)
+                if _results:
+                    mem_lines = ["## Relevant memory", ""]
+                    for r in _results:
+                        mem_lines.append(
+                            f"- **{r['slug']}** (score={r['score']:.2f}): {r['content_preview']}"
+                        )
+                    _system = _system + "\n\n" + "\n".join(mem_lines)
+            except Exception:
+                pass
+
         result = self.runtime.run_loop(
             model=model,
-            system=self.system_prompt,
+            system=_system,
             user_message=user_message,
             tool_schemas=all_schemas,
             tool_executor=self._execute_with_hook,
