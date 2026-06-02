@@ -80,3 +80,11 @@ Summary: Added lazy-import event emission (try/except pattern) in all four sourc
 Files changed: praxis/ambient.py (event emission after queue.append in 4 source callbacks), tests/test_ambient.py (new TestAmbientEmitsTriggered class), feature_list.json (event-bus-ambient-wiring passes=true)
 Next session should: Implement api-core-auth (priority 10, depends on event-bus-queue-wiring which passes) — REST auth middleware for /api/* routes using PRAXIS_UI_TOKEN Bearer token. Check mcp_server.py and api.py for existing route registration. Patch target: Starlette middleware or route-level dependency check. Also eligible: trust-store-core (priority 40, no depends_on) — create praxis/trust.py with TrustStore and TrustLevel enum.
 ---
+--- Session 9: api-core-auth ---
+Date: 2026-06-02
+Feature: Create praxis/api.py with token auth helper; PRAXIS_UI_TOKEN env var for bearer auth
+Status: COMPLETE
+Summary: Created praxis/api.py with _check_token(request) -> Response|None and _check_token_ws(websocket) -> bool. _check_token returns None when PRAXIS_UI_TOKEN is unset (auth disabled) or when the Authorization header matches "Bearer {token}", otherwise returns a 401 JSONResponse. _check_token_ws accepts token via ?token= query param or Authorization header. Added PRAXIS_UI_TOKEN and PRAXIS_MCP_BIND env vars to .env.example under a new "# Web UI + API" section. 13 new tests, all passing; 1123 total tests pass.
+Files changed: praxis/api.py (new), tests/test_api.py (new), .env.example (new Web UI + API section), feature_list.json (api-core-auth passes=true)
+Next session should: Implement api-status-queue-list (priority 11, depends on api-core-auth which now passes) — GET /api/status returning {version, queue_stats, daemon_running} and GET /api/queue with pagination. Add handlers to praxis/api.py and wire them into mcp_server.py routes list. Tests: test_status_returns_json, test_queue_list_empty, test_queue_list_with_tasks. Use _check_token at the top of each handler; queue data from .praxis/queue/tasks.jsonl; daemon check via .praxis/praxis.pid.
+---

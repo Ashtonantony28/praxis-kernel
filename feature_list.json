@@ -129,7 +129,7 @@
     "depends_on": [
       "event-bus-queue-wiring"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "api-status-queue-list",
