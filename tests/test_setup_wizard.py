@@ -520,6 +520,36 @@ class TestLinearStep:
         assert env_data.get("PRAXIS_LINEAR_API_KEY") == "linear_key_abc"
         assert "api.linear.app" in env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
 
+    def test_linear_step_yes_writes_key_and_domain(self, tmp_path):
+        """Feature test: Linear 'y' → PRAXIS_LINEAR_API_KEY written; api.linear.app in domains."""
+        _inp = make_input("1", "y", "n", "n", "y", "n", "n", "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok", "linear_key_feature")
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert env_data.get("PRAXIS_LINEAR_API_KEY") == "linear_key_feature"
+        assert "api.linear.app" in env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+
+    def test_linear_step_no_writes_nothing(self, tmp_path):
+        """Feature test: Linear 'n' → no PRAXIS_LINEAR_API_KEY, no api.linear.app domain."""
+        _inp, _gp = _skip_all_inputs(tmp_path)
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert "PRAXIS_LINEAR_API_KEY" not in env_data
+        domains = env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+        assert "api.linear.app" not in domains
+
     def test_linear_domain_not_duplicated(self, tmp_path):
         """If api.linear.app already in PRAXIS_ALLOWED_DOMAINS, it is not duplicated."""
         # Pre-seed .env with api.linear.app already present

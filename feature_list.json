@@ -1,0 +1,589 @@
+[
+  {
+    "id": "wizard-linear-step",
+    "category": "infra",
+    "priority": 1,
+    "description": "Setup wizard prompts for Linear API key and appends api.linear.app to PRAXIS_ALLOWED_DOMAINS",
+    "steps": [
+      "In praxis/setup_wizard.py, insert a new step after the GitHub step: ask 'Enable Linear integration? [y/N]'",
+      "If y: print instructions, use _getpass() for PRAXIS_LINEAR_API_KEY, write to .env, append api.linear.app to PRAXIS_ALLOWED_DOMAINS",
+      "Verify: test_linear_step_yes_writes_key_and_domain and test_linear_step_no_writes_nothing pass"
+    ],
+    "depends_on": [],
+    "passes": true
+  },
+  {
+    "id": "wizard-notion-step",
+    "category": "infra",
+    "priority": 2,
+    "description": "Setup wizard prompts for Notion token and appends api.notion.com to PRAXIS_ALLOWED_DOMAINS",
+    "steps": [
+      "In praxis/setup_wizard.py, insert step after wizard-linear-step: ask 'Enable Notion integration? [y/N]'",
+      "If y: print instructions for notion.so/my-integrations, use _getpass() for PRAXIS_NOTION_TOKEN, append api.notion.com",
+      "Verify: test_notion_step_yes_writes_token_and_domain passes"
+    ],
+    "depends_on": [
+      "wizard-linear-step"
+    ],
+    "passes": false
+  },
+  {
+    "id": "wizard-calendar-step",
+    "category": "infra",
+    "priority": 3,
+    "description": "Setup wizard prompts for Calendar iCal URL and appends calendar.google.com to PRAXIS_ALLOWED_DOMAINS",
+    "steps": [
+      "In praxis/setup_wizard.py, insert step after wizard-notion-step: ask 'Enable Calendar integration? [y/N]'",
+      "If y: print iCal URL instructions, use _input() (not _getpass) for PRAXIS_CALENDAR_URL, add to _redact_secrets(), append calendar.google.com",
+      "Verify: test_calendar_step_yes_writes_url and test_calendar_url_uses_input_not_getpass pass"
+    ],
+    "depends_on": [
+      "wizard-notion-step"
+    ],
+    "passes": false
+  },
+  {
+    "id": "wizard-domains-additive",
+    "category": "infra",
+    "priority": 4,
+    "description": "PRAXIS_ALLOWED_DOMAINS appending is additive across all wizard steps \u2014 preserves existing, no duplicates",
+    "steps": [
+      "Extract _append_allowed_domain(env_file, domain) helper: read current value, split by comma, add only if not present, write back",
+      "Use this helper in wizard-linear-step, wizard-notion-step, wizard-calendar-step",
+      "Verify: test_allowed_domains_additive_preserves_existing and test_allowed_domains_no_duplicate_on_rerun pass"
+    ],
+    "depends_on": [
+      "wizard-calendar-step"
+    ],
+    "passes": false
+  },
+  {
+    "id": "event-bus-core",
+    "category": "infra",
+    "priority": 5,
+    "description": "Create praxis/event_bus.py with EventBus class, singleton, and event name constants",
+    "steps": [
+      "Create praxis/event_bus.py: EventBus class with subscribe(), unsubscribe(), async publish(), publish_sync(); thread-safe with asyncio.Lock; queue maxsize=100; drop-on-full with stderr warning",
+      "Module-level constants: TASK_QUEUED, TASK_STARTED, TASK_TOKEN, TASK_COMPLETED, TASK_FAILED, APPROVAL_ADDED, SCHEDULE_FIRED, AMBIENT_TRIGGERED, COMPACTION_FIRED, HEARTBEAT",
+      "get_event_bus() returns process-level singleton; publish_sync handles both running-loop and no-loop cases",
+      "Verify: python -m pytest tests/test_event_bus.py -v \u2014 all 25+ tests pass"
+    ],
+    "depends_on": [],
+    "passes": false
+  },
+  {
+    "id": "event-bus-queue-wiring",
+    "category": "infra",
+    "priority": 6,
+    "description": "Wire TASK_STARTED/COMPLETED/FAILED events into queue_runner.py transition points",
+    "steps": [
+      "In praxis/queue_runner.py _run_atomic_task(): emit TASK_STARTED after update_status('running'), TASK_COMPLETED after update_status('done'), TASK_FAILED after move_to_dead_letter()",
+      "In _run_staged_task(): emit TASK_STARTED after update_status('running'), TASK_COMPLETED after update_status('done'), TASK_FAILED after update_status('failed')",
+      "Add TODO comment above run_queue_loop(): 'TASK_QUEUED emitted from api.py POST /api/queue'",
+      "Verify: test_queue_runner_emits_started, test_queue_runner_emits_completed, test_queue_runner_emits_failed pass"
+    ],
+    "depends_on": [
+      "event-bus-core"
+    ],
+    "passes": false
+  },
+  {
+    "id": "event-bus-scheduler-wiring",
+    "category": "infra",
+    "priority": 7,
+    "description": "Wire SCHEDULE_FIRED event into scheduler.py tick() after dispatching a task",
+    "steps": [
+      "Read praxis/scheduler.py fully. In CronScheduler.tick(), after the TaskQueue.add() call, emit get_event_bus().publish_sync(SCHEDULE_FIRED, {schedule_id, name, prompt[:100]})",
+      "Verify: test_scheduler_emits_schedule_fired passes; existing scheduler tests still pass"
+    ],
+    "depends_on": [
+      "event-bus-core"
+    ],
+    "passes": false
+  },
+  {
+    "id": "event-bus-ambient-wiring",
+    "category": "infra",
+    "priority": 8,
+    "description": "Wire AMBIENT_TRIGGERED event into ambient.py source detection callbacks",
+    "steps": [
+      "Read praxis/ambient.py fully. In each source callback (email, calendar, linear, github), after enqueuing a task, emit get_event_bus().publish_sync(AMBIENT_TRIGGERED, {source, summary[:200]})",
+      "Verify: existing ambient tests still pass; new test_ambient_emits_triggered passes"
+    ],
+    "depends_on": [
+      "event-bus-core"
+    ],
+    "passes": false
+  },
+  {
+    "id": "api-core-auth",
+    "category": "api",
+    "priority": 10,
+    "description": "Create praxis/api.py with token auth helper; PRAXIS_UI_TOKEN env var for bearer auth",
+    "steps": [
+      "Create praxis/api.py with _check_token(request) -> Response|None: if PRAXIS_UI_TOKEN not set return None; if Authorization != 'Bearer {token}' return 401 JSON",
+      "_check_token_ws(websocket) -> bool: same check for WebSocket handshake, uses query param ?token= or header",
+      "Add PRAXIS_UI_TOKEN and PRAXIS_MCP_BIND to .env.example under '# Web UI + API' section",
+      "Verify: test_api_no_auth_when_token_not_set and test_api_401_when_token_wrong pass"
+    ],
+    "depends_on": [
+      "event-bus-queue-wiring"
+    ],
+    "passes": false
+  },
+  {
+    "id": "api-status-queue-list",
+    "category": "api",
+    "priority": 11,
+    "description": "GET /api/status and GET /api/queue endpoints returning system info and paginated task list",
+    "steps": [
+      "GET /api/status: return {version, queue_stats (counts by status from tasks.jsonl), daemon_running (praxis.pid exists and process alive)}",
+      "GET /api/queue: accept ?status=, ?limit=50, ?offset=0; read tasks.jsonl; return {tasks: [...], total: int}; each task has id, prompt_preview[:100], status, priority, queued_at",
+      "Verify: test_status_returns_json, test_queue_list_empty, test_queue_list_with_tasks pass"
+    ],
+    "depends_on": [
+      "api-core-auth"
+    ],
+    "passes": false
+  },
+  {
+    "id": "api-queue-mutations",
+    "category": "api",
+    "priority": 12,
+    "description": "POST /api/queue (add task), GET /api/queue/{id} (detail), DELETE /api/queue/{id} (cancel)",
+    "steps": [
+      "POST /api/queue: body {prompt, priority=3, mode='build'}; use TaskQueue.add(); emit TASK_QUEUED event; return {task_id}",
+      "GET /api/queue/{task_id}: return full task dict + result from results/{id}.txt if exists",
+      "DELETE /api/queue/{task_id}: cancel pending only (update_status 'failed', error='cancelled'); 404 if not found; 409 if not pending",
+      "Verify: test_queue_add_creates_task, test_queue_add_emits_event, test_queue_cancel_pending, test_queue_cancel_running_409 pass"
+    ],
+    "depends_on": [
+      "api-status-queue-list"
+    ],
+    "passes": false
+  },
+  {
+    "id": "api-approvals",
+    "category": "api",
+    "priority": 13,
+    "description": "GET /api/approvals list, POST approve/reject/bulk \u2014 scanning all staging files",
+    "steps": [
+      "GET /api/approvals: scan .praxis/staging/external_actions.jsonl, slack/messages/*.json, events/*.ics, drafts/*.eml, wiki_updates.jsonl; return pending items as list",
+      "POST /api/approvals/{id}/approve and /reject: find item by id field across staging files; update status; reuse --approve code path from __main__.py",
+      "POST /api/approvals/bulk: {ids, action} \u2014 call approve/reject per id; return {results: [{id, status}]}",
+      "Verify: test_approvals_list_empty, test_approvals_list_with_external_actions, test_approval_approve_sets_status, test_approvals_bulk_approve_all pass"
+    ],
+    "depends_on": [
+      "api-queue-mutations"
+    ],
+    "passes": false
+  },
+  {
+    "id": "api-schedule",
+    "category": "api",
+    "priority": 14,
+    "description": "Full CRUD for /api/schedule: list, add, update, delete, enable, disable, run-now",
+    "steps": [
+      "GET /api/schedule: read .praxis/schedule/tasks.json; return list of ScheduledTask dicts",
+      "POST /api/schedule: add via CronScheduler.add_task(); PUT /{id}: update fields; DELETE /{id}: remove",
+      "POST /{id}/enable, /{id}/disable: toggle enabled; POST /{id}/run-now: enqueue task immediately",
+      "Verify: test_schedule_list, test_schedule_add, test_schedule_enable_disable, test_schedule_run_now pass"
+    ],
+    "depends_on": [
+      "api-approvals"
+    ],
+    "passes": false
+  },
+  {
+    "id": "api-wiki-memory-integrations",
+    "category": "api",
+    "priority": 15,
+    "description": "Wiki search/list/detail, memory list, integration validate, soul/heartbeat GET/PUT",
+    "steps": [
+      "GET /api/wiki/search?q=: keyword search in wiki/pages/*.md filenames and content; return [{slug, score, content_preview}]",
+      "GET /api/wiki/pages and /api/wiki/pages/{slug}: list with frontmatter, detail with full content",
+      "GET /api/memory: last 10 entries from .praxis/memory/conversations/*.jsonl",
+      "GET /api/integrations (cached, TTL=300s) and POST /api/integrations/validate (force fresh): call validate logic, return [{name, status, message}]",
+      "GET/PUT /api/soul and /api/heartbeat: read/write .praxis/SOUL.md and .praxis/HEARTBEAT.md",
+      "Verify: test_wiki_search_matches_slug, test_wiki_page_detail_404, test_integrations_uses_cache pass"
+    ],
+    "depends_on": [
+      "api-schedule"
+    ],
+    "passes": false
+  },
+  {
+    "id": "mcp-websocket-endpoint",
+    "category": "api",
+    "priority": 16,
+    "description": "WS /ws WebSocket endpoint subscribing to EventBus and streaming events to connected clients",
+    "steps": [
+      "In praxis/mcp_server.py start(): add ws_endpoint(websocket) async function that accepts WebSocket, subscribes to EventBus '*', loops await queue.get() with 25s timeout (send ping on timeout), sends events as JSON, unsubscribes on disconnect",
+      "Add 'from starlette.routing import WebSocketRoute' and 'from starlette.websockets import WebSocket, WebSocketDisconnect' to imports inside try block",
+      "Add WebSocketRoute('/ws', endpoint=ws_endpoint) to the Starlette routes list",
+      "Verify: test_ws_auth_rejected_without_token, test_ws_receives_events pass"
+    ],
+    "depends_on": [
+      "api-wiki-memory-integrations"
+    ],
+    "passes": false
+  },
+  {
+    "id": "mcp-routes-host-static",
+    "category": "api",
+    "priority": 17,
+    "description": "Register all api.py routes in mcp_server.py, parameterize host binding, serve UI static files",
+    "steps": [
+      "Import all handler functions from praxis.api and add their Routes to the Starlette routes list in start()",
+      "Change uvicorn.run host='127.0.0.1' to host=os.environ.get('PRAXIS_MCP_BIND','127.0.0.1')",
+      "After routes list, conditionally Mount('/ui', StaticFiles(directory=str(ui_dist), html=True)) if praxis/ui/dist/ exists",
+      "Update startup stderr log to print API, WebSocket, and UI URLs",
+      "Verify: python -m praxis --mcp starts; curl http://localhost:8765/api/status returns JSON"
+    ],
+    "depends_on": [
+      "mcp-websocket-endpoint"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-scaffold",
+    "category": "ui",
+    "priority": 20,
+    "description": "Create praxis/ui/ Vite+React project scaffold with package.json, vite.config.ts, tailwind, index.html",
+    "steps": [
+      "Create praxis/ui/package.json with react 18, react-dom, react-router-dom, @tanstack/react-query, zustand, date-fns, react-markdown, remark-gfm, lucide-react; devDeps: vite, @vitejs/plugin-react, tailwindcss, autoprefixer, postcss",
+      "Create vite.config.ts: base='/ui/', outDir='dist', proxy /api/* and /ws to localhost:8765",
+      "Create tailwind.config.ts, postcss.config.ts, index.html mounting #root",
+      "Add praxis/ui/node_modules/ and praxis/ui/dist/ to .gitignore",
+      "Verify: cd praxis/ui && npm install && npm run build completes without errors"
+    ],
+    "depends_on": [
+      "mcp-routes-host-static"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-design-system",
+    "category": "ui",
+    "priority": 21,
+    "description": "Global CSS design tokens: dark theme, color palette, typography, layout primitives",
+    "steps": [
+      "Create src/styles/globals.css: --bg:#0a0c10, --surface:#13161f, --surface2:#1c2030, --border:rgba(255,255,255,0.08), --text1:#e8ecf4, --text2:#8892a4, --cyan:#22d3ee, --green:#4ade80, --orange:#fb923c, --red:#f87171",
+      "CSS classes: .chip (status pill), .status-dot, @keyframes pulse, @keyframes blink",
+      "Verify: npm run build succeeds; design tokens appear in compiled output"
+    ],
+    "depends_on": [
+      "ui-scaffold"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-api-ws-foundation",
+    "category": "ui",
+    "priority": 22,
+    "description": "API client fetch wrapper and Zustand WebSocket store connecting to /ws",
+    "steps": [
+      "Create src/api/client.ts: get(path), post(path, body), del(path); adds Authorization: Bearer header if VITE_PRAXIS_TOKEN env set; throws ApiError with status on non-2xx",
+      "Create src/store/ws.ts: Zustand store with {connected, pendingApprovals, runningTasks, connect(url), disconnect()}; on 'approval.added' event increment pendingApprovals; on 'task.started' increment runningTasks; on 'task.completed'/'task.failed' decrement",
+      "Verify: TypeScript compiles; npm run build succeeds"
+    ],
+    "depends_on": [
+      "ui-design-system"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-layout-router",
+    "category": "ui",
+    "priority": 23,
+    "description": "App router with React Router and sidebar Layout with nav badges",
+    "steps": [
+      "Create src/App.tsx: BrowserRouter with routes / \u2192 Chat, /approvals \u2192 Approvals, /tasks \u2192 Tasks, /wiki \u2192 Wiki, /wiki/:slug \u2192 WikiPage, /schedule \u2192 Schedule, /settings \u2192 Settings; initialize WebSocket on mount",
+      "Create src/components/Layout.tsx: fixed-width sidebar (52px) with icon nav buttons using lucide-react; orange badge on Approvals showing pendingApprovals from ws store; cyan badge on Tasks showing runningTasks",
+      "Verify: npm run build succeeds; http://localhost:5173/ui/ loads in dev mode"
+    ],
+    "depends_on": [
+      "ui-api-ws-foundation"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-chat-screen",
+    "category": "ui",
+    "priority": 24,
+    "description": "Chat screen: task input, mode toggle, streaming output panel, task history sidebar",
+    "steps": [
+      "Create src/screens/Chat.tsx: left sidebar (200px) with recent tasks from GET /api/queue?limit=20; each item shows prompt_preview, status chip, time ago",
+      "Main panel: output area (flex-1, monospace, scrollable) with prompt line in cyan and output text; animated blinking cursor while running; renders markdown on completion via react-markdown",
+      "Input row: multiline textarea (Ctrl+Enter submits), mode pill toggle Build/Plan, send button; POST /api/queue on submit; quick-action pills: 'Morning briefing', 'Lint wiki', 'Queue status'",
+      "WebSocket: subscribe to task.token events for active task_id, append to output; on task.completed stop cursor and render markdown",
+      "Verify: submit a task, see streaming output, task appears in history sidebar"
+    ],
+    "depends_on": [
+      "ui-layout-router"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-approvals-screen",
+    "category": "ui",
+    "priority": 25,
+    "description": "Approvals screen: card list with approve/reject, bulk actions, browser notifications",
+    "steps": [
+      "Create src/screens/Approvals.tsx: fetch GET /api/approvals; refetch on approval.added WebSocket event",
+      "Per-card: provider icon (N for Notion, colored dot for Linear, mail for email), action name, time ago, checkbox; params in monospace dark block; Approve (green) / Reject (red) buttons; on action: fade card, decrement badge",
+      "Bulk bar (shown when items selected): 'N items selected' + 'Approve selected' + 'Reject selected'; calls POST /api/approvals/bulk",
+      "Empty state: checkmark icon + 'All clear \u2014 nothing needs your approval'",
+      "Browser notifications: request permission on mount; send Notification on approval.added when page not focused",
+      "Verify: pending approvals appear; approve/reject updates state; badge decrements"
+    ],
+    "depends_on": [
+      "ui-chat-screen"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-task-board-screen",
+    "category": "ui",
+    "priority": 26,
+    "description": "Task Board: 4-column kanban (Pending/Running/Done/Failed), task detail drawer",
+    "steps": [
+      "Create src/screens/TaskBoard.tsx: 4-column CSS grid; fetch GET /api/queue on load; refetch on task.* WebSocket events",
+      "Pending column: cards with prompt_preview, priority badge, 'queued N min ago'; Cancel button (\u00d7) \u2192 DELETE /api/queue/{id}",
+      "Running column: pulsing cyan dot in header; cards with elapsed timer (update every 5s); animated left border",
+      "Done column: green header badge; Failed column: red header badge with error_preview; Retry button \u2192 POST /api/queue re-submit same prompt",
+      "Task detail drawer: slides in from right on card click; full prompt, full result (markdown), error, retry history; close button",
+      "Verify: tasks appear in correct columns; running tasks show elapsed time; cancel removes card"
+    ],
+    "depends_on": [
+      "ui-approvals-screen"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-wiki-screen",
+    "category": "ui",
+    "priority": 27,
+    "description": "Wiki Browser: entity list with search, markdown page viewer with frontmatter, ingest button",
+    "steps": [
+      "Create src/screens/Wiki.tsx: search bar \u2192 GET /api/wiki/search?q=; left panel entity list from GET /api/wiki/pages grouped by type (People/Projects/Other); click \u2192 navigate to /wiki/:slug",
+      "Create src/screens/WikiPage.tsx: GET /api/wiki/pages/:slug; render with react-markdown + remark-gfm; frontmatter badges (valid_from, entity_type); yellow superseded banner if superseded_on set; typed links as clickable pills",
+      "Ingest button: file picker \u2192 POST /api/wiki/ingest (if endpoint exists, else show TODO toast)",
+      "Verify: navigate to Wiki, search for a page slug, see rendered markdown"
+    ],
+    "depends_on": [
+      "ui-task-board-screen"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-schedule-screen",
+    "category": "ui",
+    "priority": 28,
+    "description": "Schedule Manager: table with enable/disable toggles, add form with cron preview",
+    "steps": [
+      "Create src/screens/Schedule.tsx: fetch GET /api/schedule; table with Name, Cron, Next run, Last run, Enabled toggle, Actions",
+      "Toggle: POST /api/schedule/{id}/enable or /disable; Run now: POST /api/schedule/{id}/run-now with brief 'queued' toast; Delete: with confirmation popover",
+      "Add form (shown on '+ Add'): name input, cron input, prompt textarea; human-readable cron preview from simple lookup table (e.g. '0 7 * * *' \u2192 'Every day at 7am'); Submit \u2192 POST /api/schedule",
+      "Verify: schedules appear; toggle updates enabled state; add form creates schedule"
+    ],
+    "depends_on": [
+      "ui-wiki-screen"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-settings-screen",
+    "category": "ui",
+    "priority": 29,
+    "description": "Settings: integration health panel, runtime info, SOUL.md and HEARTBEAT.md editors",
+    "steps": [
+      "Create src/screens/Settings.tsx: 2-column grid of cards",
+      "Card 1 \u2014 Integration Health: GET /api/integrations; per-row: name, status icon (green check/red X/gray minus), message; Refresh button \u2192 POST /api/integrations/validate",
+      "Card 2 \u2014 Runtime Info: GET /api/status; show version, runtime, model, uptime, queue depth in monospace",
+      "Card 3 (full width) \u2014 SOUL.md: GET /api/soul; textarea; Save \u2192 PUT /api/soul",
+      "Card 4 (full width) \u2014 HEARTBEAT.md: same for /api/heartbeat",
+      "Verify: integrations show current status; SOUL.md content loads and saves"
+    ],
+    "depends_on": [
+      "ui-schedule-screen"
+    ],
+    "passes": false
+  },
+  {
+    "id": "ui-build-integration",
+    "category": "ui",
+    "priority": 30,
+    "description": "Wire npm run build into install.sh; add UI to .gitignore; update startup log",
+    "steps": [
+      "Add to install.sh: if node available, cd praxis/ui && npm install && npm run build; else print Node.js not found message",
+      "Verify .gitignore has praxis/ui/node_modules/ and praxis/ui/dist/",
+      "Verify: bash install.sh from fresh checkout builds the UI; python -m praxis --mcp shows 'UI: http://127.0.0.1:8765/ui/' in startup log"
+    ],
+    "depends_on": [
+      "ui-settings-screen"
+    ],
+    "passes": false
+  },
+  {
+    "id": "trust-store-core",
+    "category": "infra",
+    "priority": 40,
+    "description": "Create praxis/trust.py with TrustStore and TrustLevel enum",
+    "steps": [
+      "Create praxis/trust.py: TrustLevel(IntEnum) with OWNER=0, ADMIN=1, USER=2, BLOCKED=3",
+      "TrustStore.__init__(config: dict): reads PRAXIS_OWNER_IDS and PRAXIS_ADMIN_IDS (format 'channel:id,channel:id') from env; reads convergence.yaml channels.<ch>.trust_ids.owner/admin lists; PRAXIS_DEFAULT_TRUST default='user'",
+      "resolve(channel, sender_id) -> TrustLevel: lookup order: env vars \u2192 yaml \u2192 default",
+      "is_read_only_prompt(prompt) -> bool: any keyword in {'query','status','validate','what','show','list','search','tell me','how many','when','who','where','check'} in prompt.lower()",
+      "get_trust_store(config) singleton; add PRAXIS_OWNER_IDS/PRAXIS_ADMIN_IDS/PRAXIS_DEFAULT_TRUST to .env.example",
+      "Verify: python -m pytest tests/test_trust.py -v \u2014 25+ tests pass"
+    ],
+    "depends_on": [],
+    "passes": false
+  },
+  {
+    "id": "trust-channel-wiring",
+    "category": "infra",
+    "priority": 41,
+    "description": "Wire TrustStore into Telegram, Slack, and WhatsApp message handlers",
+    "steps": [
+      "In praxis/integrations/telegram.py message handler: resolve trust for update.effective_user.id; BLOCKED\u2192return silently; USER+write-intent prompt\u2192reply 'I can only answer read-only queries'; ADMIN/OWNER\u2192proceed",
+      "In praxis/slack_listener.py: same pattern using event['user'] as sender_id",
+      "In praxis/integrations/whatsapp.py: add trust check on top of ALLOWED_NUMBERS; OWNER_IDS format 'whatsapp:number'",
+      "Add trust_ids section documentation comment to convergence.yaml",
+      "Verify: test_telegram_handler_blocks_message, test_telegram_handler_allows_owner pass; all existing channel tests pass"
+    ],
+    "depends_on": [
+      "trust-store-core"
+    ],
+    "passes": false
+  },
+  {
+    "id": "compaction-claude-runtime",
+    "category": "infra",
+    "priority": 42,
+    "description": "Add context compaction to ClaudeCodeRuntime: token tracking and _maybe_compact()",
+    "steps": [
+      "Read praxis/runtime/claude_code.py fully. Add _MODEL_CONTEXT_LIMITS dict and _DEFAULT_CONTEXT_LIMIT=128_000",
+      "Add self._session_tokens=0 to __init__; after each API response add input+output tokens to _session_tokens",
+      "Add _maybe_compact(messages) -> list: if _session_tokens >= max_ctx * threshold, append compaction prompt, call LLM once, rebuild history (system + summary + last 8 pairs), reset tokens, emit COMPACTION_FIRED event; return new messages",
+      "Wire _maybe_compact() into run_loop() after token update; add PRAXIS_COMPACTION_THRESHOLD and PRAXIS_COMPACTION_RESERVE to .env.example",
+      "Verify: tests/test_compaction.py \u2014 triggered at threshold, not below, history rebuilt correctly"
+    ],
+    "depends_on": [],
+    "passes": false
+  },
+  {
+    "id": "compaction-openai-runtime",
+    "category": "infra",
+    "priority": 43,
+    "description": "Same context compaction logic for OpenAIBaseRuntime",
+    "steps": [
+      "Read praxis/runtime/openai_base.py fully. Apply same _maybe_compact() pattern as compaction-claude-runtime",
+      "For OpenAI models, use 128_000 as default context limit; read model name from self._model or equivalent",
+      "Verify: test_openai_runtime_compaction_triggered passes; all existing OpenAI runtime tests pass"
+    ],
+    "depends_on": [
+      "compaction-claude-runtime"
+    ],
+    "passes": false
+  },
+  {
+    "id": "semantic-store-core",
+    "category": "infra",
+    "priority": 44,
+    "description": "Create praxis/memory_store.py with SemanticMemoryStore using ChromaDB and sentence-transformers",
+    "steps": [
+      "Create praxis/memory_store.py: SemanticMemoryStore class with ChromaDB persistent client at .praxis/memory/chroma/; embedding model all-MiniLM-L6-v2 via sentence-transformers",
+      "embed_wiki_page(slug, content, metadata): upsert by slug; set metadata.active=False if superseded_on set",
+      "search(query, top_k=6, include_superseded=False) -> list[dict]: return [{slug, score, content_preview[:200], metadata}]; return [] silently if deps missing",
+      "delete_page(slug), rebuild_index(wiki_root) -> int",
+      "get_memory_store(workspace_root) -> SemanticMemoryStore|None: return None if PRAXIS_SEMANTIC_MEMORY != 'true' or deps missing",
+      "Add [semantic] dep group: chromadb>=0.4, sentence-transformers>=2.2; add .praxis/memory/chroma/ to .gitignore",
+      "Verify: tests/test_memory_store.py with mocked chromadb \u2014 all 20+ tests pass"
+    ],
+    "depends_on": [],
+    "passes": false
+  },
+  {
+    "id": "semantic-wiring",
+    "category": "infra",
+    "priority": 45,
+    "description": "Wire semantic memory into wiki.py ingest() and orchestrator context assembly; add CLI flag",
+    "steps": [
+      "In praxis/wiki.py ingest(): after writing page to disk, call get_memory_store(wiki_root).embed_wiki_page() if store exists",
+      "In praxis/orchestrator.py context assembly (before LLM call): call get_memory_store().search(prompt, top_k) and prepend as '## Relevant memory\\n' block AFTER \u00a75 governance block",
+      "In praxis/__main__.py: add --rebuild-memory-index flag that calls store.rebuild_index(wiki_root) and prints count",
+      "Add PRAXIS_SEMANTIC_MEMORY=true, PRAXIS_SEMANTIC_TOP_K=6 to .env.example",
+      "Verify: test_wiki_ingest_calls_embed, test_orchestrator_prepends_semantic_context pass"
+    ],
+    "depends_on": [
+      "semantic-store-core"
+    ],
+    "passes": false
+  },
+  {
+    "id": "hooks-file-watcher",
+    "category": "infra",
+    "priority": 46,
+    "description": "Create praxis/hooks_engine.py with FileWatcher using watchdog library",
+    "steps": [
+      "Create praxis/hooks_engine.py: FileWatcher class reading PRAXIS_WATCH_PATHS, PRAXIS_WATCH_EXTENSIONS, PRAXIS_WATCH_DEBOUNCE (default 5s), PRAXIS_WATCH_PROMPT_TEMPLATE",
+      "_PraxisEventHandler(FileSystemEventHandler): on CREATE events matching extension: debounce by path, enqueue Task with expanded template prompt, priority=5",
+      "FileWatcher.start() \u2192 background daemon thread with watchdog Observer; stop() \u2192 graceful stop",
+      "IMPORTANT: watcher never reads file content \u2014 only generates a prompt asking orchestrator to use Read tool",
+      "Add [hooks] dep group: watchdog>=3.0; add PRAXIS_WATCH_PATHS section to .env.example",
+      "Verify: test_file_watcher_enqueues_on_create, test_file_watcher_ignores_non_matching_extension pass"
+    ],
+    "depends_on": [],
+    "passes": false
+  },
+  {
+    "id": "hooks-webhook-wiring",
+    "category": "infra",
+    "priority": 47,
+    "description": "Add webhook receiver route to hooks_engine.py and wire both into daemon and mcp_server",
+    "steps": [
+      "In praxis/hooks_engine.py: add make_webhook_routes() returning list of Starlette Routes for POST /webhooks/{source}; handler validates HMAC-SHA256 if PRAXIS_WEBHOOK_SECRET_{SOURCE} set; reads JSON body (max 64KB); enqueues Task with prompt 'Webhook from {source}: {json[:500]}'",
+      "In praxis/daemon.py or queue_runner.py after _start_ambient_monitor: if PRAXIS_WATCH_PATHS set, start FileWatcher",
+      "In praxis/mcp_server.py start(): call make_webhook_routes() and extend routes list",
+      "Verify: test_webhook_valid_json_enqueues_task, test_webhook_invalid_hmac_returns_401 pass"
+    ],
+    "depends_on": [
+      "hooks-file-watcher",
+      "mcp-routes-host-static"
+    ],
+    "passes": false
+  },
+  {
+    "id": "voice-transcriber",
+    "category": "infra",
+    "priority": 48,
+    "description": "Create praxis/voice.py with VoiceTranscriber supporting API (Whisper) and local backends",
+    "steps": [
+      "Create praxis/voice.py: VoiceTranscriptionError(Exception); VoiceTranscriber(backend='api'): API backend uses openai.Audio.transcriptions.create(model='whisper-1'); local backend uses faster-whisper (optional)",
+      "transcribe(audio_path, language='en') -> str: raises VoiceTranscriptionError on failure; supports .ogg,.mp3,.m4a,.wav,.webm",
+      "get_transcriber() -> VoiceTranscriber|None: singleton if PRAXIS_VOICE_ENABLED=true; None otherwise",
+      "Add [voice] dep group: openai>=1.0; add PRAXIS_VOICE_ENABLED, PRAXIS_WHISPER_BACKEND, PRAXIS_WHISPER_LANGUAGE to .env.example",
+      "Verify: tests/test_voice.py with mocked openai \u2014 test_transcriber_returns_none_when_disabled, test_transcribe_calls_whisper_api pass"
+    ],
+    "depends_on": [],
+    "passes": false
+  },
+  {
+    "id": "voice-telegram-wiring",
+    "category": "infra",
+    "priority": 49,
+    "description": "Wire voice transcription into Telegram adapter for voice message handling",
+    "steps": [
+      "Read praxis/integrations/telegram.py fully. In message handler, check if update.message.voice or .audio is set before processing text",
+      "If voice: get_transcriber(); if None reply 'Voice input not enabled. Set PRAXIS_VOICE_ENABLED=true.'; else download file to tempfile.NamedTemporaryFile(suffix='.ogg'), transcribe, unlink, set message_text='[Voice] {transcribed}'",
+      "On VoiceTranscriptionError: reply 'Voice transcription failed: {e}' and return",
+      "Verify: test_telegram_handler_routes_voice_to_transcriber, test_telegram_handler_prepends_voice_tag pass"
+    ],
+    "depends_on": [
+      "voice-transcriber"
+    ],
+    "passes": false
+  }
+]

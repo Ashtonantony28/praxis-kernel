@@ -1,0 +1,26 @@
+--- Session 0: V2 migration initializer ---
+Date: 2026-06-01
+Feature: V2 workflow scaffolding
+Status: COMPLETE
+Summary: Migrated from V1 orchestrate.py (persistent orchestrator) to V2 file-first session
+  loop. Created feature_list.json (60 features across 4 phases), ARCHITECTURE.md,
+  CONSTRAINTS.md, lean CLAUDE.md, init.sh, run_session.py, phases.json, phase_orchestrator.py,
+  prompts/coding-session.md, and .claude/hooks/pre-compact.py. The existing orchestrate.py,
+  CLAUDE.md (full version), and §5 hook remain untouched.
+Files changed: feature_list.json, ARCHITECTURE.md, CONSTRAINTS.md, CLAUDE.md (replaced with
+  lean sprint version — old content now in ARCHITECTURE.md), init.sh, run_session.py,
+  phases.json, phase_orchestrator.py, prompts/coding-session.md,
+  .claude/hooks/pre-compact.py, claude-progress.txt (this file)
+Next session should: Read ARCHITECTURE.md first — it has the full project context that the
+  old CLAUDE.md had. Run bash init.sh to verify §5 hook md5 is intact. Pick the lowest-priority
+  feature from feature_list.json where passes=false and all depends_on are passes=true.
+  Phase 1 starts with wizard-linear-step (priority 1) and event-bus-core (priority 5) in parallel.
+---
+--- Session 1: wizard-linear-step ---
+Date: 2026-06-02
+Feature: Setup wizard Linear integration step
+Status: COMPLETE
+Summary: The Linear step was already implemented in praxis/setup_wizard.py (STEP 5a/17) with correct _getpass() usage and api.linear.app domain append. Updated prompt from "Do you want Linear integration? (y/n):" to "Enable Linear integration? [y/N]" per spec. Added the two specifically-named feature tests: test_linear_step_yes_writes_key_and_domain and test_linear_step_no_writes_nothing in tests/test_setup_wizard.py. All 1067 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/setup_wizard.py (prompt text update), tests/test_setup_wizard.py (2 new tests added)
+Next session should: Implement wizard-notion-step (priority 2) — depends on wizard-linear-step which now passes. Notion step is already in setup_wizard.py as STEP 5b/17; just add test_notion_step_yes_writes_token_and_domain with the exact feature-spec name. Same pattern as this session.
+---

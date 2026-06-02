@@ -274,7 +274,7 @@ def run_wizard(
     linear_enabled = False
     try:
         print("STEP 5a/17 — Linear (optional)")
-        linear_choice = _safe_input("Do you want Linear integration? (y/n): ", _input).strip().lower()
+        linear_choice = _safe_input("Enable Linear integration? [y/N]: ", _input).strip().lower()
         if linear_choice == "y":
             linear_enabled = True
             print("  Get your API key at: linear.app → Settings → API →")
