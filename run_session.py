@@ -129,6 +129,8 @@ async def run_coding_session(project_dir: str) -> dict:
         msg = str(exc).lower()
         if any(kw in msg for kw in RATE_LIMIT_KEYWORDS):
             return {"is_error": True, "subtype": "rate_limit", "result": str(exc)}
+        if "error result: success" in str(exc) or "session limit" in msg:
+            return {"is_error": True, "subtype": "rate_limit", "result": str(exc)}
         raise
 
     return {"is_error": is_error, "subtype": subtype, "result": "\n".join(result_text)}
