@@ -40,3 +40,11 @@ Summary: Updated the Calendar integration prompt in praxis/setup_wizard.py from 
 Files changed: praxis/setup_wizard.py (prompt text update), tests/test_setup_wizard.py (2 new tests added)
 Next session should: Implement event-bus-core (priority 5) — create praxis/event_bus.py with EventBus class, singleton, and subscribe/publish methods. No depends_on, so it can be done independently. Check ARCHITECTURE.md for EventBus design: in-process pub/sub, not a message broker. Tests should cover subscribe/publish and singleton behavior.
 ---
+--- Session 4: wizard-domains-additive ---
+Date: 2026-06-02
+Feature: PRAXIS_ALLOWED_DOMAINS appending is additive across wizard steps
+Status: COMPLETE
+Summary: Added _append_allowed_domain(env_file, domain) helper to praxis/setup_wizard.py that reads the env file, splits PRAXIS_ALLOWED_DOMAINS by comma, adds the domain only if absent, and writes back with overwrite mode (preserving all other keys). Replaced the inline domain-append logic in linear, notion, and calendar wizard steps with calls to this helper. Added TestAllowedDomainsAdditive class with the two required feature tests. All 1072 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/setup_wizard.py (new _append_allowed_domain helper, simplified linear/notion/calendar steps), tests/test_setup_wizard.py (import update, new TestAllowedDomainsAdditive class with 2 tests)
+Next session should: Implement event-bus-core (priority 5) — no depends_on, create praxis/event_bus.py with EventBus class (in-process pub/sub singleton, subscribe/publish methods). See ARCHITECTURE.md: "EventBus is in-process pub/sub, not a message broker." Tests should cover subscribe/publish and singleton pattern.
+---

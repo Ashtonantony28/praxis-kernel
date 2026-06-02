@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from praxis.setup_wizard import _read_env, _write_env, run_wizard
+from praxis.setup_wizard import _append_allowed_domain, _read_env, _write_env, run_wizard
 
 
 # ---------------------------------------------------------------------------
@@ -712,6 +712,37 @@ class TestCalendarStep:
 
         # URL was provided via _input and must be captured correctly
         assert env_data.get("PRAXIS_CALENDAR_URL") == cal_url
+
+
+# ===========================================================================
+# TestAllowedDomainsAdditive
+# ===========================================================================
+
+class TestAllowedDomainsAdditive:
+    """Feature tests for _append_allowed_domain — additive, no-duplicate behaviour."""
+
+    def test_allowed_domains_additive_preserves_existing(self, tmp_path):
+        """_append_allowed_domain preserves existing domains when adding a new one."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("PRAXIS_ALLOWED_DOMAINS=existing.com\n", encoding="utf-8")
+
+        _append_allowed_domain(env_file, "new.com")
+
+        data = _read_env(env_file)
+        domains = [d.strip() for d in data.get("PRAXIS_ALLOWED_DOMAINS", "").split(",") if d.strip()]
+        assert "existing.com" in domains
+        assert "new.com" in domains
+
+    def test_allowed_domains_no_duplicate_on_rerun(self, tmp_path):
+        """Calling _append_allowed_domain twice with the same domain adds it only once."""
+        env_file = tmp_path / ".env"
+
+        _append_allowed_domain(env_file, "api.linear.app")
+        _append_allowed_domain(env_file, "api.linear.app")
+
+        data = _read_env(env_file)
+        domains = [d.strip() for d in data.get("PRAXIS_ALLOWED_DOMAINS", "").split(",") if d.strip()]
+        assert domains.count("api.linear.app") == 1
 
 
 # ===========================================================================

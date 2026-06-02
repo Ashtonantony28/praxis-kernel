@@ -55,7 +55,7 @@
     "depends_on": [
       "wizard-calendar-step"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "event-bus-core",

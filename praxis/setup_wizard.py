@@ -72,6 +72,22 @@ def _safe_getpass(prompt: str, _getpass: Callable | None) -> str:
         return input(prompt)
 
 
+def _append_allowed_domain(env_file: Path, domain: str) -> None:
+    """Append *domain* to PRAXIS_ALLOWED_DOMAINS in *env_file* if not already present.
+
+    Reads current value from the file, splits by comma, adds *domain* only if
+    it is not already in the list, then writes the updated value back.
+    Other keys already in the file are preserved (read then overwrite).
+    """
+    data = _read_env(env_file)
+    current = data.get("PRAXIS_ALLOWED_DOMAINS", "")
+    existing = [d.strip() for d in current.split(",") if d.strip()]
+    if domain not in existing:
+        existing.append(domain)
+    data["PRAXIS_ALLOWED_DOMAINS"] = ",".join(existing)
+    _write_env(env_file, data, "overwrite")
+
+
 # ---------------------------------------------------------------------------
 # Public wizard entry point
 # ---------------------------------------------------------------------------
@@ -282,14 +298,7 @@ def run_wizard(
             linear_api_key = _safe_getpass("  PRAXIS_LINEAR_API_KEY: ", _getpass)
             if linear_api_key:
                 env_data["PRAXIS_LINEAR_API_KEY"] = linear_api_key
-            # Additive domain append
-            current_domains = env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
-            linear_domain = "api.linear.app"
-            if current_domains:
-                if linear_domain not in current_domains:
-                    env_data["PRAXIS_ALLOWED_DOMAINS"] = current_domains + "," + linear_domain
-            else:
-                env_data["PRAXIS_ALLOWED_DOMAINS"] = linear_domain
+            _append_allowed_domain(env_file, "api.linear.app")
     except Exception as exc:
         print(f"  Warning: step 5a error ({exc}), continuing.")
 
@@ -311,14 +320,7 @@ def run_wizard(
             notion_token = _safe_getpass("  PRAXIS_NOTION_TOKEN: ", _getpass)
             if notion_token:
                 env_data["PRAXIS_NOTION_TOKEN"] = notion_token
-            # Additive domain append
-            current_domains = env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
-            notion_domain = "api.notion.com"
-            if current_domains:
-                if notion_domain not in current_domains:
-                    env_data["PRAXIS_ALLOWED_DOMAINS"] = current_domains + "," + notion_domain
-            else:
-                env_data["PRAXIS_ALLOWED_DOMAINS"] = notion_domain
+            _append_allowed_domain(env_file, "api.notion.com")
     except Exception as exc:
         print(f"  Warning: step 5b error ({exc}), continuing.")
 
@@ -339,14 +341,7 @@ def run_wizard(
             calendar_url = _safe_input("  PRAXIS_CALENDAR_URL: ", _input).strip()
             if calendar_url:
                 env_data["PRAXIS_CALENDAR_URL"] = calendar_url
-            # Additive domain append
-            current_domains = env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
-            calendar_domain = "calendar.google.com"
-            if current_domains:
-                if calendar_domain not in current_domains:
-                    env_data["PRAXIS_ALLOWED_DOMAINS"] = current_domains + "," + calendar_domain
-            else:
-                env_data["PRAXIS_ALLOWED_DOMAINS"] = calendar_domain
+            _append_allowed_domain(env_file, "calendar.google.com")
     except Exception as exc:
         print(f"  Warning: step 5c error ({exc}), continuing.")
 
