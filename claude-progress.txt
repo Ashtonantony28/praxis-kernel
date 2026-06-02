@@ -24,3 +24,11 @@ Summary: The Linear step was already implemented in praxis/setup_wizard.py (STEP
 Files changed: praxis/setup_wizard.py (prompt text update), tests/test_setup_wizard.py (2 new tests added)
 Next session should: Implement wizard-notion-step (priority 2) — depends on wizard-linear-step which now passes. Notion step is already in setup_wizard.py as STEP 5b/17; just add test_notion_step_yes_writes_token_and_domain with the exact feature-spec name. Same pattern as this session.
 ---
+--- Session 2: wizard-notion-step ---
+Date: 2026-06-02
+Feature: Setup wizard Notion integration step
+Status: COMPLETE
+Summary: Updated the Notion integration prompt in praxis/setup_wizard.py from "Do you want Notion integration? (y/n): " to "Enable Notion integration? [y/N]: " per spec. Added the specifically-named feature test test_notion_step_yes_writes_token_and_domain to tests/test_setup_wizard.py. All 1068 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/setup_wizard.py (prompt text update), tests/test_setup_wizard.py (1 new test added)
+Next session should: Implement wizard-calendar-step (priority 3) — depends on wizard-notion-step which now passes. Calendar step is already in setup_wizard.py as STEP 5c/17; prompt needs updating to "Enable Calendar integration? [y/N]"; use _input() (not _getpass) for PRAXIS_CALENDAR_URL; add test_calendar_step_yes_writes_url and test_calendar_url_uses_input_not_getpass. Also add PRAXIS_CALENDAR_URL to _redact_secrets().
+---

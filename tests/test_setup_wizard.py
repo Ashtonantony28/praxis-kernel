@@ -600,6 +600,21 @@ class TestNotionStep:
         assert env_data.get("PRAXIS_NOTION_TOKEN") == "notion_secret_xyz"
         assert "api.notion.com" in env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
 
+    def test_notion_step_yes_writes_token_and_domain(self, tmp_path):
+        """Feature test: Notion 'y' → PRAXIS_NOTION_TOKEN written; api.notion.com in domains."""
+        _inp = make_input("1", "y", "n", "n", "n", "y", "n", "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok", "notion_secret_feature")
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert env_data.get("PRAXIS_NOTION_TOKEN") == "notion_secret_feature"
+        assert "api.notion.com" in env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+
     def test_notion_domain_not_duplicated(self, tmp_path):
         """If api.notion.com already in PRAXIS_ALLOWED_DOMAINS, it is not duplicated."""
         env_file = tmp_path / ".env"

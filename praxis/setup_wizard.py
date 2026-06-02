@@ -301,7 +301,7 @@ def run_wizard(
     notion_enabled = False
     try:
         print("STEP 5b/17 — Notion (optional)")
-        notion_choice = _safe_input("Do you want Notion integration? (y/n): ", _input).strip().lower()
+        notion_choice = _safe_input("Enable Notion integration? [y/N]: ", _input).strip().lower()
         if notion_choice == "y":
             notion_enabled = True
             print("  Get your token at: notion.so/my-integrations →")

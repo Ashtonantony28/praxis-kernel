@@ -25,7 +25,7 @@
     "depends_on": [
       "wizard-linear-step"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "wizard-calendar-step",
