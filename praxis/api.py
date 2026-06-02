@@ -711,3 +711,322 @@ async def post_approvals_bulk(request: Request) -> Response:
             results.append({"id": approval_id, "status": item_result.get("status", "unknown")})
 
     return JSONResponse({"results": results})
+
+
+# ---------------------------------------------------------------------------
+# Schedule — CronScheduler CRUD helpers
+# ---------------------------------------------------------------------------
+
+def _get_scheduler(root: Path):
+    """Return a loaded CronScheduler for .praxis/schedule/tasks.json."""
+    from praxis.queue import TaskQueue
+    from praxis.scheduler import CronScheduler
+
+    queue = TaskQueue(root / ".praxis" / "queue")
+    schedule_file = root / ".praxis" / "schedule" / "tasks.json"
+    log_file = root / ".praxis" / "schedule" / "dispatch.log"
+    scheduler = CronScheduler(queue=queue, schedule_file=schedule_file, log_file=log_file)
+    scheduler.load()
+    return scheduler
+
+
+# ---------------------------------------------------------------------------
+# Schedule route handlers
+# ---------------------------------------------------------------------------
+
+async def get_schedule(request: Request) -> Response:
+    """GET /api/schedule — list all scheduled tasks.
+
+    Returns::
+
+        {
+          "tasks": [
+            {
+              "id": "...",
+              "name": "...",
+              "prompt": "...",
+              "schedule": "*/5 * * * *",
+              "enabled": true,
+              "last_run": "...|null",
+              "next_run": "...|null",
+              "created_at": "..."
+            },
+            ...
+          ]
+        }
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    root = _workspace_root()
+    scheduler = _get_scheduler(root)
+    tasks = [t.to_dict() for t in scheduler.list_tasks()]
+    return JSONResponse({"tasks": tasks})
+
+
+async def post_schedule(request: Request) -> Response:
+    """POST /api/schedule — add a new scheduled task.
+
+    Request body (JSON)::
+
+        {
+          "name": "string (required)",
+          "prompt": "string (required)",
+          "schedule": "cron expression (required)"
+        }
+
+    Returns::
+
+        {"task": {...ScheduledTask dict...}}
+
+    Returns 400 if required fields missing or cron expression invalid.
+    Returns 503 if croniter is not installed.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "Request body must be valid JSON"},
+            status_code=400,
+        )
+
+    name = body.get("name", "")
+    prompt = body.get("prompt", "")
+    schedule = body.get("schedule", "")
+
+    if not name or not isinstance(name, str):
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "'name' field is required and must be a non-empty string"},
+            status_code=400,
+        )
+    if not prompt or not isinstance(prompt, str):
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "'prompt' field is required and must be a non-empty string"},
+            status_code=400,
+        )
+    if not schedule or not isinstance(schedule, str):
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "'schedule' field is required and must be a non-empty string"},
+            status_code=400,
+        )
+
+    root = _workspace_root()
+    scheduler = _get_scheduler(root)
+
+    try:
+        task = scheduler.add_task(name=name, schedule=schedule, prompt=prompt)
+    except ImportError as exc:
+        return JSONResponse(
+            {"error": "Service Unavailable", "detail": str(exc)},
+            status_code=503,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            {"error": "Bad Request", "detail": f"Invalid cron expression: {exc}"},
+            status_code=400,
+        )
+
+    scheduler.save()
+    return JSONResponse({"task": task.to_dict()}, status_code=201)
+
+
+async def put_schedule_task(request: Request) -> Response:
+    """PUT /api/schedule/{task_id} — update fields of a scheduled task.
+
+    Updatable fields: name, prompt, schedule, enabled.
+
+    Returns::
+
+        {"task": {...updated ScheduledTask dict...}}
+
+    Returns 404 if task not found.
+    Returns 400 if cron expression is invalid.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    task_id = request.path_params.get("task_id", "")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "Request body must be valid JSON"},
+            status_code=400,
+        )
+
+    root = _workspace_root()
+    scheduler = _get_scheduler(root)
+
+    # Find the task
+    task = next((t for t in scheduler.list_tasks() if t.id == task_id), None)
+    if task is None:
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Scheduled task '{task_id}' not found"},
+            status_code=404,
+        )
+
+    # Apply updates
+    if "name" in body and isinstance(body["name"], str) and body["name"]:
+        task.name = body["name"]
+    if "prompt" in body and isinstance(body["prompt"], str) and body["prompt"]:
+        task.prompt = body["prompt"]
+    if "enabled" in body and isinstance(body["enabled"], bool):
+        task.enabled = body["enabled"]
+    if "schedule" in body and isinstance(body["schedule"], str) and body["schedule"]:
+        from praxis.scheduler import _compute_next_run
+        try:
+            task.schedule = body["schedule"]
+            task.next_run = _compute_next_run(body["schedule"])
+        except ImportError as exc:
+            return JSONResponse(
+                {"error": "Service Unavailable", "detail": str(exc)},
+                status_code=503,
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"error": "Bad Request", "detail": f"Invalid cron expression: {exc}"},
+                status_code=400,
+            )
+
+    scheduler.save()
+    return JSONResponse({"task": task.to_dict()})
+
+
+async def delete_schedule_task(request: Request) -> Response:
+    """DELETE /api/schedule/{task_id} — remove a scheduled task.
+
+    Returns 204 No Content on success.
+    Returns 404 if not found.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    task_id = request.path_params.get("task_id", "")
+
+    root = _workspace_root()
+    scheduler = _get_scheduler(root)
+
+    try:
+        scheduler.remove_task(task_id)
+    except KeyError:
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Scheduled task '{task_id}' not found"},
+            status_code=404,
+        )
+
+    scheduler.save()
+    return Response(status_code=204)
+
+
+async def post_schedule_enable(request: Request) -> Response:
+    """POST /api/schedule/{task_id}/enable — enable a scheduled task.
+
+    Returns::
+
+        {"task": {...updated ScheduledTask dict...}}
+
+    Returns 404 if not found.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    task_id = request.path_params.get("task_id", "")
+
+    root = _workspace_root()
+    scheduler = _get_scheduler(root)
+
+    try:
+        scheduler.enable_task(task_id)
+    except KeyError:
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Scheduled task '{task_id}' not found"},
+            status_code=404,
+        )
+
+    scheduler.save()
+    task = next((t for t in scheduler.list_tasks() if t.id == task_id), None)
+    return JSONResponse({"task": task.to_dict() if task else {}})
+
+
+async def post_schedule_disable(request: Request) -> Response:
+    """POST /api/schedule/{task_id}/disable — disable a scheduled task.
+
+    Returns::
+
+        {"task": {...updated ScheduledTask dict...}}
+
+    Returns 404 if not found.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    task_id = request.path_params.get("task_id", "")
+
+    root = _workspace_root()
+    scheduler = _get_scheduler(root)
+
+    try:
+        scheduler.disable_task(task_id)
+    except KeyError:
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Scheduled task '{task_id}' not found"},
+            status_code=404,
+        )
+
+    scheduler.save()
+    task = next((t for t in scheduler.list_tasks() if t.id == task_id), None)
+    return JSONResponse({"task": task.to_dict() if task else {}})
+
+
+async def post_schedule_run_now(request: Request) -> Response:
+    """POST /api/schedule/{task_id}/run-now — enqueue task immediately.
+
+    Bypasses the cron schedule and enqueues the task's prompt directly.
+
+    Returns::
+
+        {"task_id": "...queued task id..."}
+
+    Returns 404 if scheduled task not found.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    task_id = request.path_params.get("task_id", "")
+
+    root = _workspace_root()
+    scheduler = _get_scheduler(root)
+
+    scheduled_task = next((t for t in scheduler.list_tasks() if t.id == task_id), None)
+    if scheduled_task is None:
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Scheduled task '{task_id}' not found"},
+            status_code=404,
+        )
+
+    from praxis.queue import Task, TaskQueue
+
+    queue = TaskQueue(root / ".praxis" / "queue")
+    queued = Task.create(prompt=scheduled_task.prompt, priority=5)
+    queue.ensure_dirs()
+    queue.append(queued)
+
+    # Emit event — fire-and-forget.
+    try:
+        from praxis.event_bus import TASK_QUEUED, get_event_bus
+        get_event_bus().publish_sync(TASK_QUEUED, {"task_id": queued.id, "source": "run_now", "schedule_id": task_id})
+    except Exception:
+        pass
+
+    return JSONResponse({"task_id": queued.id}, status_code=201)

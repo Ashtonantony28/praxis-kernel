@@ -983,3 +983,471 @@ class TestPostApprovalsBulk:
             response = asyncio.run(post_approvals_bulk(req))
 
         assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Helpers for schedule tests
+# ---------------------------------------------------------------------------
+
+def _make_schedule_get_request(query_params: dict | None = None, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request for GET schedule endpoints."""
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.query_params = query_params or {}
+    req.path_params = {}
+    return req
+
+
+def _make_schedule_post_request(
+    path_params: dict | None = None,
+    body: dict | None = None,
+    auth_header: str = "",
+) -> MagicMock:
+    """Return a mock Starlette Request for POST/PUT/DELETE schedule endpoints."""
+    import asyncio
+    import json
+
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.path_params = path_params or {}
+    req.query_params = {}
+
+    async def _json():
+        return body or {}
+
+    req.json = _json
+    return req
+
+
+def _make_schedule_path_request(path_params: dict, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request with path_params (no body)."""
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.path_params = path_params
+    req.query_params = {}
+    return req
+
+
+# ---------------------------------------------------------------------------
+# GET /api/schedule — test_schedule_list
+# ---------------------------------------------------------------------------
+
+class TestGetSchedule:
+    def test_schedule_list_empty(self, tmp_path):
+        """get_schedule() returns empty list when no tasks exist."""
+        import asyncio
+        import json
+        from praxis.api import get_schedule
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_get_request()
+            response = asyncio.run(get_schedule(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "tasks" in body
+        assert body["tasks"] == []
+
+    def test_schedule_list_with_tasks(self, tmp_path):
+        """get_schedule() returns tasks from .praxis/schedule/tasks.json."""
+        import asyncio
+        import json
+        from praxis.api import get_schedule
+
+        schedule_dir = tmp_path / ".praxis" / "schedule"
+        schedule_dir.mkdir(parents=True, exist_ok=True)
+        tasks_data = [
+            {
+                "id": "task-1",
+                "name": "Morning report",
+                "prompt": "Summarize overnight events",
+                "schedule": "0 8 * * *",
+                "enabled": True,
+                "last_run": None,
+                "next_run": "2026-06-03T08:00:00+00:00",
+                "created_at": "2026-06-02T12:00:00+00:00",
+            }
+        ]
+        (schedule_dir / "tasks.json").write_text(json.dumps(tasks_data), encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_get_request()
+            response = asyncio.run(get_schedule(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert len(body["tasks"]) == 1
+        assert body["tasks"][0]["name"] == "Morning report"
+        assert body["tasks"][0]["enabled"] is True
+
+    def test_schedule_list_401_with_bad_token(self, tmp_path):
+        """get_schedule() returns 401 when token is wrong."""
+        import asyncio
+        from praxis.api import get_schedule
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "secret", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_get_request(auth_header="Bearer wrong")
+            response = asyncio.run(get_schedule(req))
+
+        assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /api/schedule — test_schedule_add
+# ---------------------------------------------------------------------------
+
+class TestPostSchedule:
+    def test_schedule_add(self, tmp_path):
+        """post_schedule() creates a new scheduled task and returns 201."""
+        import asyncio
+        import json
+        from unittest.mock import patch as _patch
+        from praxis.api import post_schedule
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            with _patch("praxis.scheduler._compute_next_run", return_value="2026-06-03T09:00:00+00:00"):
+                req = _make_schedule_post_request(body={
+                    "name": "Daily summary",
+                    "prompt": "Summarize the day",
+                    "schedule": "0 9 * * *",
+                })
+                response = asyncio.run(post_schedule(req))
+
+        assert response.status_code == 201
+        body = json.loads(response.body)
+        assert "task" in body
+        assert body["task"]["name"] == "Daily summary"
+        assert body["task"]["prompt"] == "Summarize the day"
+        assert body["task"]["schedule"] == "0 9 * * *"
+        assert "id" in body["task"]
+        assert body["task"]["enabled"] is True
+
+    def test_schedule_add_persists_to_file(self, tmp_path):
+        """post_schedule() saves the task to .praxis/schedule/tasks.json."""
+        import asyncio
+        import json
+        from unittest.mock import patch as _patch
+        from praxis.api import post_schedule
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            with _patch("praxis.scheduler._compute_next_run", return_value="2026-06-03T09:00:00+00:00"):
+                req = _make_schedule_post_request(body={
+                    "name": "Persist test",
+                    "prompt": "Check persistence",
+                    "schedule": "*/10 * * * *",
+                })
+                asyncio.run(post_schedule(req))
+
+        tasks_file = tmp_path / ".praxis" / "schedule" / "tasks.json"
+        assert tasks_file.exists()
+        saved = json.loads(tasks_file.read_text())
+        assert len(saved) == 1
+        assert saved[0]["name"] == "Persist test"
+
+    def test_schedule_add_missing_name(self, tmp_path):
+        """post_schedule() returns 400 if name is missing."""
+        import asyncio
+        from praxis.api import post_schedule
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_post_request(body={
+                "prompt": "Do something",
+                "schedule": "0 * * * *",
+            })
+            response = asyncio.run(post_schedule(req))
+
+        assert response.status_code == 400
+
+    def test_schedule_add_missing_prompt(self, tmp_path):
+        """post_schedule() returns 400 if prompt is missing."""
+        import asyncio
+        from praxis.api import post_schedule
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_post_request(body={
+                "name": "Task name",
+                "schedule": "0 * * * *",
+            })
+            response = asyncio.run(post_schedule(req))
+
+        assert response.status_code == 400
+
+    def test_schedule_add_invalid_cron(self, tmp_path):
+        """post_schedule() returns 400 if cron expression is invalid."""
+        import asyncio
+        from unittest.mock import patch as _patch
+        from praxis.api import post_schedule
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            with _patch("praxis.scheduler._compute_next_run", side_effect=ValueError("bad cron")):
+                req = _make_schedule_post_request(body={
+                    "name": "Bad cron",
+                    "prompt": "Do something",
+                    "schedule": "not a cron",
+                })
+                response = asyncio.run(post_schedule(req))
+
+        assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/schedule/{task_id} — update
+# ---------------------------------------------------------------------------
+
+class TestPutScheduleTask:
+    def test_schedule_update_name(self, tmp_path):
+        """put_schedule_task() updates the task name."""
+        import asyncio
+        import json
+        from praxis.api import put_schedule_task
+
+        schedule_dir = tmp_path / ".praxis" / "schedule"
+        schedule_dir.mkdir(parents=True, exist_ok=True)
+        task_id = "abc-123"
+        tasks_data = [{
+            "id": task_id,
+            "name": "Old name",
+            "prompt": "Do something",
+            "schedule": "0 9 * * *",
+            "enabled": True,
+            "last_run": None,
+            "next_run": "2026-06-03T09:00:00+00:00",
+            "created_at": "2026-06-02T12:00:00+00:00",
+        }]
+        (schedule_dir / "tasks.json").write_text(json.dumps(tasks_data), encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_post_request(
+                path_params={"task_id": task_id},
+                body={"name": "New name"},
+            )
+            response = asyncio.run(put_schedule_task(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["task"]["name"] == "New name"
+
+    def test_schedule_update_not_found(self, tmp_path):
+        """put_schedule_task() returns 404 for unknown task_id."""
+        import asyncio
+        from praxis.api import put_schedule_task
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_post_request(
+                path_params={"task_id": "does-not-exist"},
+                body={"name": "Updated"},
+            )
+            response = asyncio.run(put_schedule_task(req))
+
+        assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/schedule/{task_id}
+# ---------------------------------------------------------------------------
+
+class TestDeleteScheduleTask:
+    def test_schedule_delete(self, tmp_path):
+        """delete_schedule_task() removes the task and returns 204."""
+        import asyncio
+        import json
+        from praxis.api import delete_schedule_task
+
+        schedule_dir = tmp_path / ".praxis" / "schedule"
+        schedule_dir.mkdir(parents=True, exist_ok=True)
+        task_id = "del-task-1"
+        tasks_data = [{
+            "id": task_id,
+            "name": "To be deleted",
+            "prompt": "Delete me",
+            "schedule": "0 * * * *",
+            "enabled": True,
+            "last_run": None,
+            "next_run": "2026-06-03T00:00:00+00:00",
+            "created_at": "2026-06-02T12:00:00+00:00",
+        }]
+        (schedule_dir / "tasks.json").write_text(json.dumps(tasks_data), encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": task_id})
+            response = asyncio.run(delete_schedule_task(req))
+
+        assert response.status_code == 204
+        # Verify file was updated
+        saved = json.loads((schedule_dir / "tasks.json").read_text())
+        assert len(saved) == 0
+
+    def test_schedule_delete_not_found(self, tmp_path):
+        """delete_schedule_task() returns 404 for unknown task_id."""
+        import asyncio
+        from praxis.api import delete_schedule_task
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": "no-such-task"})
+            response = asyncio.run(delete_schedule_task(req))
+
+        assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /api/schedule/{task_id}/enable + /disable — test_schedule_enable_disable
+# ---------------------------------------------------------------------------
+
+class TestScheduleEnableDisable:
+    def _write_task(self, schedule_dir, task_id: str, enabled: bool):
+        import json
+        tasks_data = [{
+            "id": task_id,
+            "name": "Toggle test",
+            "prompt": "Run something",
+            "schedule": "0 10 * * *",
+            "enabled": enabled,
+            "last_run": None,
+            "next_run": "2026-06-03T10:00:00+00:00",
+            "created_at": "2026-06-02T12:00:00+00:00",
+        }]
+        (schedule_dir / "tasks.json").write_text(json.dumps(tasks_data), encoding="utf-8")
+
+    def test_schedule_enable(self, tmp_path):
+        """post_schedule_enable() enables a disabled task."""
+        import asyncio
+        import json
+        from praxis.api import post_schedule_enable
+
+        schedule_dir = tmp_path / ".praxis" / "schedule"
+        schedule_dir.mkdir(parents=True, exist_ok=True)
+        task_id = "en-task-1"
+        self._write_task(schedule_dir, task_id, enabled=False)
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": task_id})
+            response = asyncio.run(post_schedule_enable(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["task"]["enabled"] is True
+
+    def test_schedule_disable(self, tmp_path):
+        """post_schedule_disable() disables an enabled task."""
+        import asyncio
+        import json
+        from praxis.api import post_schedule_disable
+
+        schedule_dir = tmp_path / ".praxis" / "schedule"
+        schedule_dir.mkdir(parents=True, exist_ok=True)
+        task_id = "dis-task-1"
+        self._write_task(schedule_dir, task_id, enabled=True)
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": task_id})
+            response = asyncio.run(post_schedule_disable(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["task"]["enabled"] is False
+
+    def test_schedule_enable_not_found(self, tmp_path):
+        """post_schedule_enable() returns 404 for unknown task."""
+        import asyncio
+        from praxis.api import post_schedule_enable
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": "ghost"})
+            response = asyncio.run(post_schedule_enable(req))
+
+        assert response.status_code == 404
+
+    def test_schedule_disable_not_found(self, tmp_path):
+        """post_schedule_disable() returns 404 for unknown task."""
+        import asyncio
+        from praxis.api import post_schedule_disable
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": "ghost"})
+            response = asyncio.run(post_schedule_disable(req))
+
+        assert response.status_code == 404
+
+    def test_schedule_enable_persists_to_file(self, tmp_path):
+        """post_schedule_enable() saves updated enabled=True to disk."""
+        import asyncio
+        import json
+        from praxis.api import post_schedule_enable
+
+        schedule_dir = tmp_path / ".praxis" / "schedule"
+        schedule_dir.mkdir(parents=True, exist_ok=True)
+        task_id = "persist-en-1"
+        self._write_task(schedule_dir, task_id, enabled=False)
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": task_id})
+            asyncio.run(post_schedule_enable(req))
+
+        saved = json.loads((schedule_dir / "tasks.json").read_text())
+        assert saved[0]["enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# POST /api/schedule/{task_id}/run-now — test_schedule_run_now
+# ---------------------------------------------------------------------------
+
+class TestScheduleRunNow:
+    def test_schedule_run_now(self, tmp_path):
+        """post_schedule_run_now() enqueues the task immediately and returns 201."""
+        import asyncio
+        import json
+        from praxis.api import post_schedule_run_now
+
+        schedule_dir = tmp_path / ".praxis" / "schedule"
+        schedule_dir.mkdir(parents=True, exist_ok=True)
+        task_id = "run-task-1"
+        tasks_data = [{
+            "id": task_id,
+            "name": "Run now test",
+            "prompt": "Do it now",
+            "schedule": "0 * * * *",
+            "enabled": True,
+            "last_run": None,
+            "next_run": "2026-06-03T00:00:00+00:00",
+            "created_at": "2026-06-02T12:00:00+00:00",
+        }]
+        (schedule_dir / "tasks.json").write_text(json.dumps(tasks_data), encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": task_id})
+            response = asyncio.run(post_schedule_run_now(req))
+
+        assert response.status_code == 201
+        body = json.loads(response.body)
+        assert "task_id" in body
+        assert isinstance(body["task_id"], str)
+
+        # Verify the task was enqueued
+        queue_file = tmp_path / ".praxis" / "queue" / "tasks.jsonl"
+        assert queue_file.exists()
+        lines = [l for l in queue_file.read_text().splitlines() if l.strip()]
+        assert len(lines) == 1
+        queued = json.loads(lines[0])
+        assert queued["prompt"] == "Do it now"
+
+    def test_schedule_run_now_not_found(self, tmp_path):
+        """post_schedule_run_now() returns 404 for unknown task."""
+        import asyncio
+        from praxis.api import post_schedule_run_now
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": "ghost-task"})
+            response = asyncio.run(post_schedule_run_now(req))
+
+        assert response.status_code == 404
+
+    def test_schedule_run_now_401_with_bad_token(self, tmp_path):
+        """post_schedule_run_now() returns 401 when token is wrong."""
+        import asyncio
+        from praxis.api import post_schedule_run_now
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "mytoken", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_schedule_path_request(path_params={"task_id": "any"}, auth_header="Bearer wrong")
+            response = asyncio.run(post_schedule_run_now(req))
+
+        assert response.status_code == 401
