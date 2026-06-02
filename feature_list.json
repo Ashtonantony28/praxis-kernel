@@ -548,7 +548,7 @@
       "Verify: test_file_watcher_enqueues_on_create, test_file_watcher_ignores_non_matching_extension pass"
     ],
     "depends_on": [],
-    "passes": false
+    "passes": true
   },
   {
     "id": "hooks-webhook-wiring",

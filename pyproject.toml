@@ -42,6 +42,9 @@ semantic = [
     "chromadb>=0.4",
     "sentence-transformers>=2.2",
 ]
+hooks = [
+    "watchdog>=3.0",
+]
 dev = [
     "pytest>=8.0",
 ]
