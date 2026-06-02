@@ -140,6 +140,14 @@ class EmailMonitor:
                     )
                     queue.append(Task.create(prompt, priority=10))
                     created.append(uid_str)
+                    try:
+                        from .event_bus import AMBIENT_TRIGGERED, get_event_bus
+                        get_event_bus().publish_sync(
+                            AMBIENT_TRIGGERED,
+                            {"source": "email", "summary": prompt[:200]},
+                        )
+                    except Exception:
+                        pass
             try:
                 conn.logout()
             except Exception:
@@ -238,6 +246,14 @@ class CalendarMonitor:
                     )
                     queue.append(Task.create(prompt, priority=10))
                     created.append(dedup_key)
+                    try:
+                        from .event_bus import AMBIENT_TRIGGERED, get_event_bus
+                        get_event_bus().publish_sync(
+                            AMBIENT_TRIGGERED,
+                            {"source": "calendar", "summary": prompt[:200]},
+                        )
+                    except Exception:
+                        pass
         except Exception as exc:
             sys.stderr.write(f"[praxis/ambient] calendar poll error: {exc}\n")
         return created
@@ -286,6 +302,14 @@ class LinearMonitor:
                 )
                 queue.append(Task.create(prompt, priority=10))
                 created.append(issue_id)
+                try:
+                    from .event_bus import AMBIENT_TRIGGERED, get_event_bus
+                    get_event_bus().publish_sync(
+                        AMBIENT_TRIGGERED,
+                        {"source": "linear", "summary": prompt[:200]},
+                    )
+                except Exception:
+                    pass
         except Exception as exc:
             sys.stderr.write(f"[praxis/ambient] linear poll error: {exc}\n")
         return created
@@ -327,6 +351,14 @@ class GitHubMonitor:
                 )
                 queue.append(Task.create(prompt, priority=10))
                 created.append(notif_id)
+                try:
+                    from .event_bus import AMBIENT_TRIGGERED, get_event_bus
+                    get_event_bus().publish_sync(
+                        AMBIENT_TRIGGERED,
+                        {"source": "github", "summary": prompt[:200]},
+                    )
+                except Exception:
+                    pass
         except Exception as exc:
             sys.stderr.write(f"[praxis/ambient] github poll error: {exc}\n")
         return created

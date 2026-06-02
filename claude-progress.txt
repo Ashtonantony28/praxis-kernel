@@ -72,3 +72,11 @@ Summary: Added lazy-import event emission in CronScheduler.tick() using the same
 Files changed: praxis/scheduler.py (event emission after queue.append), tests/test_scheduler.py (1 new test in TestCronSchedulerDueTasks), feature_list.json (event-bus-scheduler-wiring passes=true)
 Next session should: Implement event-bus-ambient-wiring (priority 8, depends on event-bus-core which passes) — emit AMBIENT_TRIGGERED from ambient monitor when it enqueues a task. Same lazy-import/try-except pattern. Then api-core-auth (priority 10, depends on event-bus-queue-wiring which passes) — REST auth middleware for /api/* routes using PRAXIS_UI_TOKEN.
 ---
+--- Session 8: event-bus-ambient-wiring ---
+Date: 2026-06-02
+Feature: Wire AMBIENT_TRIGGERED event into ambient.py source detection callbacks
+Status: COMPLETE
+Summary: Added lazy-import event emission (try/except pattern) in all four source poll() methods in praxis/ambient.py: EmailMonitor, CalendarMonitor, LinearMonitor, GitHubMonitor. Each emits AMBIENT_TRIGGERED with {source: "<name>", summary: prompt[:200]} after queue.append(). Added TestAmbientEmitsTriggered class with test_ambient_emits_triggered to tests/test_ambient.py, patching praxis.event_bus.get_event_bus (not praxis.ambient.get_event_bus, since the import is lazy). All 1110 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/ambient.py (event emission after queue.append in 4 source callbacks), tests/test_ambient.py (new TestAmbientEmitsTriggered class), feature_list.json (event-bus-ambient-wiring passes=true)
+Next session should: Implement api-core-auth (priority 10, depends on event-bus-queue-wiring which passes) — REST auth middleware for /api/* routes using PRAXIS_UI_TOKEN Bearer token. Check mcp_server.py and api.py for existing route registration. Patch target: Starlette middleware or route-level dependency check. Also eligible: trust-store-core (priority 40, no depends_on) — create praxis/trust.py with TrustStore and TrustLevel enum.
+---

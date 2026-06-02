@@ -299,3 +299,45 @@ class TestAmbientMonitor:
 
         monitor._run_all_sources()
         mock_source.poll.assert_called_once_with(mock_queue)
+
+
+class TestAmbientEmitsTriggered:
+    """Verify AMBIENT_TRIGGERED is emitted by each source callback after enqueue."""
+
+    def _make_mock_bus(self):
+        mock_bus = MagicMock()
+        mock_bus.publish_sync = MagicMock()
+        return mock_bus
+
+    def test_ambient_emits_triggered(self, tmp_path, monkeypatch):
+        """Each source emits AMBIENT_TRIGGERED with {source, summary[:200]} after enqueue."""
+        monkeypatch.setenv("PRAXIS_LINEAR_API_KEY", "lin_api_test_key")
+        mock_queue = MagicMock(spec=TaskQueue)
+        mock_bus = self._make_mock_bus()
+
+        api_response = json.dumps({
+            "data": {"issues": {"nodes": [
+                {"id": "LIN-EMIT-1", "title": "Emit event on enqueue"}
+            ]}}
+        }).encode("utf-8")
+
+        with patch("praxis.ambient.urllib.request.urlopen") as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.__enter__ = lambda s: s
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_resp.read.return_value = api_response
+            mock_urlopen.return_value = mock_resp
+
+            with patch("praxis.event_bus.get_event_bus", return_value=mock_bus):
+                monitor = LinearMonitor(tmp_path)
+                result = monitor.poll(mock_queue)
+
+        assert "LIN-EMIT-1" in result
+        mock_queue.append.assert_called_once()
+        mock_bus.publish_sync.assert_called_once()
+        call_args = mock_bus.publish_sync.call_args
+        event_name, payload = call_args[0]
+        assert event_name == "ambient.triggered"
+        assert payload["source"] == "linear"
+        assert "Emit event on enqueue" in payload["summary"]
+        assert len(payload["summary"]) <= 200
