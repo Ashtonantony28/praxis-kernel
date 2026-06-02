@@ -40,7 +40,7 @@
     "depends_on": [
       "wizard-notion-step"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "wizard-domains-additive",

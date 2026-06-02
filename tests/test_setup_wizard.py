@@ -680,6 +680,39 @@ class TestCalendarStep:
         domains = result.get("PRAXIS_ALLOWED_DOMAINS", "")
         assert domains.count("calendar.google.com") == 1
 
+    def test_calendar_step_yes_writes_url(self, tmp_path):
+        """Feature test: Calendar 'y' → PRAXIS_CALENDAR_URL written; calendar.google.com in domains."""
+        cal_url = "https://calendar.google.com/calendar/ical/feature_test/basic.ics"
+        _inp = make_input("1", "y", "n", "n", "n", "n", "y", cal_url, "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok")
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        assert env_data.get("PRAXIS_CALENDAR_URL") == cal_url
+        assert "calendar.google.com" in env_data.get("PRAXIS_ALLOWED_DOMAINS", "")
+
+    def test_calendar_url_uses_input_not_getpass(self, tmp_path):
+        """Feature test: PRAXIS_CALENDAR_URL is captured via _input (not _getpass)."""
+        cal_url = "https://calendar.google.com/calendar/ical/input_test/basic.ics"
+        # URL is in the _input sequence; _getpass only has the OAuth token
+        _inp = make_input("1", "y", "n", "n", "n", "n", "y", cal_url, "n", "n", "", "n", "n")
+        _gp = make_getpass("oauth_tok")
+        env_data = {}
+
+        def capture_write(env_file, data, mode):
+            env_data.update(data)
+
+        with patch("praxis.setup_wizard._write_env", side_effect=capture_write):
+            run_wizard(tmp_path, env_file=tmp_path / ".env", _input=_inp, _getpass=_gp)
+
+        # URL was provided via _input and must be captured correctly
+        assert env_data.get("PRAXIS_CALENDAR_URL") == cal_url
+
 
 # ===========================================================================
 # TestMainSetupMode

@@ -330,7 +330,7 @@ def run_wizard(
     calendar_enabled = False
     try:
         print("STEP 5c/17 — Calendar (optional)")
-        calendar_choice = _safe_input("Do you want Calendar integration? (y/n): ", _input).strip().lower()
+        calendar_choice = _safe_input("Enable Calendar integration? [y/N]: ", _input).strip().lower()
         if calendar_choice == "y":
             calendar_enabled = True
             print("  Get your iCal URL at: calendar.google.com →")

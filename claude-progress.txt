@@ -32,3 +32,11 @@ Summary: Updated the Notion integration prompt in praxis/setup_wizard.py from "D
 Files changed: praxis/setup_wizard.py (prompt text update), tests/test_setup_wizard.py (1 new test added)
 Next session should: Implement wizard-calendar-step (priority 3) — depends on wizard-notion-step which now passes. Calendar step is already in setup_wizard.py as STEP 5c/17; prompt needs updating to "Enable Calendar integration? [y/N]"; use _input() (not _getpass) for PRAXIS_CALENDAR_URL; add test_calendar_step_yes_writes_url and test_calendar_url_uses_input_not_getpass. Also add PRAXIS_CALENDAR_URL to _redact_secrets().
 ---
+--- Session 3: wizard-calendar-step ---
+Date: 2026-06-02
+Feature: Setup wizard Calendar integration step
+Status: COMPLETE
+Summary: Updated the Calendar integration prompt in praxis/setup_wizard.py from "Do you want Calendar integration? (y/n): " to "Enable Calendar integration? [y/N]: " per spec. Added the two specifically-named feature tests test_calendar_step_yes_writes_url and test_calendar_url_uses_input_not_getpass to tests/test_setup_wizard.py. PRAXIS_CALENDAR_URL was already in _redact_secrets() in praxis/tools.py; the URL is captured via _input (not _getpass) as confirmed by the new test. All 1070 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/setup_wizard.py (prompt text update), tests/test_setup_wizard.py (2 new tests added)
+Next session should: Implement event-bus-core (priority 5) — create praxis/event_bus.py with EventBus class, singleton, and subscribe/publish methods. No depends_on, so it can be done independently. Check ARCHITECTURE.md for EventBus design: in-process pub/sub, not a message broker. Tests should cover subscribe/publish and singleton behavior.
+---
