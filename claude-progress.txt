@@ -48,3 +48,11 @@ Summary: Added _append_allowed_domain(env_file, domain) helper to praxis/setup_w
 Files changed: praxis/setup_wizard.py (new _append_allowed_domain helper, simplified linear/notion/calendar steps), tests/test_setup_wizard.py (import update, new TestAllowedDomainsAdditive class with 2 tests)
 Next session should: Implement event-bus-core (priority 5) — no depends_on, create praxis/event_bus.py with EventBus class (in-process pub/sub singleton, subscribe/publish methods). See ARCHITECTURE.md: "EventBus is in-process pub/sub, not a message broker." Tests should cover subscribe/publish and singleton pattern.
 ---
+--- Session 5: event-bus-core ---
+Date: 2026-06-02
+Feature: In-process pub/sub EventBus with singleton and event constants
+Status: COMPLETE
+Summary: Created praxis/event_bus.py with EventBus (subscribe/unsubscribe/publish/publish_sync), 10 module-level event name constants, and get_event_bus() singleton. EventBus is thread-safe via threading.Lock for subscriber dict and asyncio.Lock for async publish. Each subscriber gets an asyncio.Queue(maxsize=100); overflow drops with stderr warning. publish_sync handles no-loop (asyncio.run) and running-loop (ensure_future) cases. Created tests/test_event_bus.py with 33 tests covering constants, subscribe/unsubscribe, async publish, sync publish, drop-on-full, thread safety, and singleton behavior. All 1105 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/event_bus.py (new), tests/test_event_bus.py (new), feature_list.json (event-bus-core passes=true)
+Next session should: Implement trust-store-core (priority 40) — create praxis/trust.py with TrustStore and TrustLevel enum. No depends_on but check ARCHITECTURE.md trust model: env vars PRAXIS_OWNER_IDS/PRAXIS_ADMIN_IDS take precedence over convergence.yaml channels.<ch>.trust_ids; PRAXIS_DEFAULT_TRUST defaults to "user". Also eligible: queue-runner-events (priority 6, depends on event-bus-core which now passes) or scheduler-emit-event (priority 7, same dep).
+---
