@@ -366,6 +366,14 @@ class CronScheduler:
             # Dispatch to queue
             self._queue.ensure_dirs()
             self._queue.append(Task.create(prompt=task.prompt, priority=5))
+            try:
+                from .event_bus import SCHEDULE_FIRED, get_event_bus
+                get_event_bus().publish_sync(
+                    SCHEDULE_FIRED,
+                    {"schedule_id": task.id, "name": task.name, "prompt": task.prompt[:100]},
+                )
+            except Exception:
+                pass
             active_prompts.add(task.prompt)
 
             # Update task metadata

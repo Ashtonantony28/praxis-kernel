@@ -237,6 +237,25 @@ class TestCronSchedulerDueTasks:
         assert dispatched == []
         mock_queue.append.assert_not_called()
 
+    def test_scheduler_emits_schedule_fired(self, tmp_path: Path):
+        """SCHEDULE_FIRED is published via the event bus when tick() dispatches a due task."""
+        from praxis.event_bus import SCHEDULE_FIRED
+
+        scheduler, mock_queue = self._make_scheduler_with_task(
+            tmp_path, next_run=_past_iso(1), prompt="do the thing"
+        )
+        mock_bus = MagicMock()
+        with (
+            patch("praxis.event_bus.get_event_bus", return_value=mock_bus),
+            patch("praxis.scheduler._compute_next_run", return_value=_future_iso(24)),
+        ):
+            scheduler.tick()
+
+        mock_bus.publish_sync.assert_called_once_with(
+            SCHEDULE_FIRED,
+            {"schedule_id": "t-due", "name": "my-task", "prompt": "do the thing"},
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestCronSchedulerAddRemove

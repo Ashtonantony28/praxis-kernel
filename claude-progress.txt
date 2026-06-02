@@ -64,3 +64,11 @@ Summary: Added lazy event bus emission calls (via try/except import of get_event
 Files changed: praxis/queue_runner.py (event emissions at 6 transition points + TODO comment), tests/test_queue_runner.py (3 new tests), feature_list.json (event-bus-queue-wiring passes=true)
 Next session should: Implement event-bus-scheduler-wiring (priority 7, depends on event-bus-core which passes) -- emit TASK_QUEUED from scheduler when it enqueues cron tasks, and HEARTBEAT_FIRED from check_heartbeat. Same lazy-import pattern; patch praxis.event_bus.get_event_bus not praxis.scheduler.get_event_bus.
 ---
+--- Session 7: event-bus-scheduler-wiring ---
+Date: 2026-06-02
+Feature: Wire SCHEDULE_FIRED event into scheduler.py tick() after dispatching a task
+Status: COMPLETE
+Summary: Added lazy-import event emission in CronScheduler.tick() using the same try/except pattern as queue_runner.py; after self._queue.append() the bus fires SCHEDULE_FIRED with {schedule_id, name, prompt[:100]}. Added test_scheduler_emits_schedule_fired to TestCronSchedulerDueTasks; patches praxis.event_bus.get_event_bus (not praxis.scheduler.get_event_bus) since import is lazy. All 1109 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/scheduler.py (event emission after queue.append), tests/test_scheduler.py (1 new test in TestCronSchedulerDueTasks), feature_list.json (event-bus-scheduler-wiring passes=true)
+Next session should: Implement event-bus-ambient-wiring (priority 8, depends on event-bus-core which passes) — emit AMBIENT_TRIGGERED from ambient monitor when it enqueues a task. Same lazy-import/try-except pattern. Then api-core-auth (priority 10, depends on event-bus-queue-wiring which passes) — REST auth middleware for /api/* routes using PRAXIS_UI_TOKEN.
+---

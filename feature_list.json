@@ -99,7 +99,7 @@
     "depends_on": [
       "event-bus-core"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "event-bus-ambient-wiring",
