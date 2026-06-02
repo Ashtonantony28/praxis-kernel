@@ -29,7 +29,8 @@ try:
     from starlette.applications import Starlette
     from starlette.requests import Request
     from starlette.responses import Response
-    from starlette.routing import Mount, Route
+    from starlette.routing import Mount, Route, WebSocketRoute
+    from starlette.websockets import WebSocket, WebSocketDisconnect
 except ImportError as exc:
     raise ImportError(
         "[praxis] MCP gateway requires additional dependencies.\n"
@@ -442,20 +443,92 @@ class MCPServer:
                 media_type="text/plain; version=0.0.4; charset=utf-8",
             )
 
+        from .api import (
+            ws_endpoint as _ws_endpoint,
+            get_status,
+            get_queue,
+            post_queue,
+            get_queue_task,
+            delete_queue_task,
+            get_approvals,
+            post_approval_action,
+            post_approvals_bulk,
+            get_schedule,
+            post_schedule,
+            put_schedule_task,
+            delete_schedule_task,
+            post_schedule_enable,
+            post_schedule_disable,
+            post_schedule_run_now,
+            get_wiki_search,
+            get_wiki_pages,
+            get_wiki_page_detail,
+            get_memory,
+            get_integrations,
+            post_integrations_validate,
+            get_soul,
+            put_soul,
+            get_heartbeat,
+            put_heartbeat,
+        )
+
+        ui_dist = Path(__file__).parent / "ui" / "dist"
+
+        extra_routes: list = []
+        if ui_dist.exists():
+            from starlette.staticfiles import StaticFiles
+            extra_routes.append(
+                Mount("/ui", app=StaticFiles(directory=str(ui_dist), html=True))
+            )
+
         app = Starlette(
             routes=[
                 Route("/sse", endpoint=sse_endpoint, methods=["GET"]),
                 Route("/metrics", endpoint=metrics_endpoint, methods=["GET"]),
                 Route("/dashboard", endpoint=dashboard_endpoint, methods=["GET"]),
+                WebSocketRoute("/ws", endpoint=_ws_endpoint),
                 Mount(message_path, app=sse_transport.handle_post_message),
+                # REST API routes
+                Route("/api/status", endpoint=get_status, methods=["GET"]),
+                Route("/api/queue", endpoint=get_queue, methods=["GET"]),
+                Route("/api/queue", endpoint=post_queue, methods=["POST"]),
+                Route("/api/queue/{task_id}", endpoint=get_queue_task, methods=["GET"]),
+                Route("/api/queue/{task_id}", endpoint=delete_queue_task, methods=["DELETE"]),
+                Route("/api/approvals", endpoint=get_approvals, methods=["GET"]),
+                Route("/api/approvals/bulk", endpoint=post_approvals_bulk, methods=["POST"]),
+                Route("/api/approvals/{approval_id}/{action}", endpoint=post_approval_action, methods=["POST"]),
+                Route("/api/schedule", endpoint=get_schedule, methods=["GET"]),
+                Route("/api/schedule", endpoint=post_schedule, methods=["POST"]),
+                Route("/api/schedule/{task_id}/enable", endpoint=post_schedule_enable, methods=["POST"]),
+                Route("/api/schedule/{task_id}/disable", endpoint=post_schedule_disable, methods=["POST"]),
+                Route("/api/schedule/{task_id}/run-now", endpoint=post_schedule_run_now, methods=["POST"]),
+                Route("/api/schedule/{task_id}", endpoint=put_schedule_task, methods=["PUT"]),
+                Route("/api/schedule/{task_id}", endpoint=delete_schedule_task, methods=["DELETE"]),
+                Route("/api/wiki/search", endpoint=get_wiki_search, methods=["GET"]),
+                Route("/api/wiki/pages", endpoint=get_wiki_pages, methods=["GET"]),
+                Route("/api/wiki/pages/{slug:path}", endpoint=get_wiki_page_detail, methods=["GET"]),
+                Route("/api/memory", endpoint=get_memory, methods=["GET"]),
+                Route("/api/integrations", endpoint=get_integrations, methods=["GET"]),
+                Route("/api/integrations/validate", endpoint=post_integrations_validate, methods=["POST"]),
+                Route("/api/soul", endpoint=get_soul, methods=["GET"]),
+                Route("/api/soul", endpoint=put_soul, methods=["PUT"]),
+                Route("/api/heartbeat", endpoint=get_heartbeat, methods=["GET"]),
+                Route("/api/heartbeat", endpoint=put_heartbeat, methods=["PUT"]),
+                *extra_routes,
             ]
         )
 
+        bind_host = os.environ.get("PRAXIS_MCP_BIND", "127.0.0.1")
+
         import sys
+        ui_url = f"http://{bind_host}:{port}/ui/" if ui_dist.exists() else "(not built)"
         sys.stderr.write(
-            f"[praxis] MCP gateway listening on http://127.0.0.1:{port}/sse\n"
+            f"[praxis] MCP gateway listening on http://{bind_host}:{port}/sse\n"
             f"[praxis] MCP tools: {len(self._all_schemas)} registered\n"
-            f"[praxis] Metrics: http://127.0.0.1:{port}/metrics\n"
-            f"[praxis] Dashboard: http://127.0.0.1:{port}/dashboard\n"
+            f"[praxis] Metrics: http://{bind_host}:{port}/metrics\n"
+            f"[praxis] Dashboard: http://{bind_host}:{port}/dashboard\n"
+            f"[praxis] API: http://{bind_host}:{port}/api/status\n"
+            f"[praxis] WebSocket: ws://{bind_host}:{port}/ws\n"
+            f"[praxis] UI: {ui_url}\n"
         )
-        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+        uvicorn.run(app, host=bind_host, port=port, log_level="warning")

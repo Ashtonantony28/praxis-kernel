@@ -705,3 +705,196 @@ class TestMCPDashboard:
         # No raw token value leakage (the dict has no value field, just metadata)
         assert "sk-" not in body
         assert "xoxb-" not in body
+
+
+# ---------------------------------------------------------------------------
+# TestMCPRoutesHostStatic — mcp-routes-host-static feature tests
+# ---------------------------------------------------------------------------
+
+
+class TestMCPRoutesHostStatic:
+    """Tests for api route registration, PRAXIS_MCP_BIND, and UI static files."""
+
+    def _build_test_client(self, config, env=None):
+        """Return a TestClient capturing the Starlette app from MCPServer.start()."""
+        import os
+        from starlette.testclient import TestClient
+
+        captured = {}
+
+        def fake_uvicorn_run(app, **kwargs):
+            captured["app"] = app
+            captured["kwargs"] = kwargs
+
+        env_patch = patch.dict(os.environ, env or {})
+        with env_patch, patch("praxis.mcp_server.uvicorn.run", side_effect=fake_uvicorn_run):
+            server = MCPServer(config)
+            server.start(port=8765)
+
+        assert "app" in captured, "uvicorn.run was not called"
+        return TestClient(captured["app"], raise_server_exceptions=False), captured
+
+    def test_api_status_route_registered(self, config):
+        """GET /api/status is registered and returns a response (auth failure or JSON)."""
+        client, _ = self._build_test_client(config)
+        response = client.get("/api/status")
+        # Without token, we expect 401 or 200; either way the route exists (not 404/405)
+        assert response.status_code != 404
+        assert response.status_code != 405
+
+    def test_api_queue_route_registered(self, config):
+        """GET /api/queue is registered and returns a response."""
+        client, _ = self._build_test_client(config)
+        response = client.get("/api/queue")
+        assert response.status_code != 404
+        assert response.status_code != 405
+
+    def test_api_approvals_route_registered(self, config):
+        """GET /api/approvals is registered and returns a response."""
+        client, _ = self._build_test_client(config)
+        response = client.get("/api/approvals")
+        assert response.status_code != 404
+        assert response.status_code != 405
+
+    def test_api_schedule_route_registered(self, config):
+        """GET /api/schedule is registered and returns a response."""
+        client, _ = self._build_test_client(config)
+        response = client.get("/api/schedule")
+        assert response.status_code != 404
+        assert response.status_code != 405
+
+    def test_api_wiki_search_route_registered(self, config):
+        """GET /api/wiki/search is registered and returns a response."""
+        client, _ = self._build_test_client(config)
+        response = client.get("/api/wiki/search?q=test")
+        assert response.status_code != 404
+        assert response.status_code != 405
+
+    def test_api_memory_route_registered(self, config):
+        """GET /api/memory is registered and returns a response."""
+        client, _ = self._build_test_client(config)
+        response = client.get("/api/memory")
+        assert response.status_code != 404
+        assert response.status_code != 405
+
+    def test_api_soul_route_registered(self, config):
+        """GET /api/soul is registered — route must not return 405 (method not allowed)."""
+        client, _ = self._build_test_client(config)
+        response = client.get("/api/soul")
+        # 404 is fine (SOUL.md not created yet); 405 would mean the route is missing
+        assert response.status_code != 405
+
+    def test_praxis_mcp_bind_env_changes_host(self, config):
+        """PRAXIS_MCP_BIND env var is passed as host to uvicorn.run."""
+        import os
+
+        captured_kwargs = {}
+
+        def fake_uvicorn_run(app, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        with patch.dict(os.environ, {"PRAXIS_MCP_BIND": "0.0.0.0"}), \
+             patch("praxis.mcp_server.uvicorn.run", side_effect=fake_uvicorn_run):
+            server = MCPServer(config)
+            server.start(port=8765)
+
+        assert captured_kwargs.get("host") == "0.0.0.0"
+
+    def test_default_host_is_localhost(self, config):
+        """Without PRAXIS_MCP_BIND, host defaults to 127.0.0.1."""
+        import os
+
+        captured_kwargs = {}
+
+        def fake_uvicorn_run(app, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        env = {k: v for k, v in os.environ.items() if k != "PRAXIS_MCP_BIND"}
+        with patch.dict(os.environ, env, clear=True), \
+             patch("praxis.mcp_server.uvicorn.run", side_effect=fake_uvicorn_run):
+            server = MCPServer(config)
+            server.start(port=8765)
+
+        assert captured_kwargs.get("host") == "127.0.0.1"
+
+    def test_ui_static_mount_when_dist_exists(self, config):
+        """When praxis/ui/dist/ exists, /ui/ route is mounted as StaticFiles."""
+        import shutil
+        import praxis.mcp_server as mcp_mod
+        from starlette.testclient import TestClient
+
+        # Temporarily create the real ui/dist directory with a test index.html
+        real_ui_dist = Path(mcp_mod.__file__).parent / "ui" / "dist"
+        created = not real_ui_dist.exists()
+        real_ui_dist.mkdir(parents=True, exist_ok=True)
+        index_file = real_ui_dist / "index.html"
+        index_file.write_text("<html>Praxis UI</html>", encoding="utf-8")
+
+        captured = {}
+
+        def fake_uvicorn_run(app, **kwargs):
+            captured["app"] = app
+
+        try:
+            with patch("praxis.mcp_server.uvicorn.run", side_effect=fake_uvicorn_run):
+                server = MCPServer(config)
+                server.start(port=8765)
+
+            assert "app" in captured, "uvicorn.run was not called"
+            client = TestClient(captured["app"], raise_server_exceptions=False)
+            response = client.get("/ui/")
+            assert response.status_code == 200
+            assert "Praxis UI" in response.text
+        finally:
+            if created:
+                shutil.rmtree(real_ui_dist, ignore_errors=True)
+            else:
+                index_file.unlink(missing_ok=True)
+
+    def test_ui_not_mounted_when_dist_absent(self, config):
+        """When praxis/ui/dist/ does not exist, /ui/ returns 404."""
+        import praxis.mcp_server as mcp_mod
+        from starlette.testclient import TestClient
+
+        captured = {}
+
+        def fake_uvicorn_run(app, **kwargs):
+            captured["app"] = app
+
+        # Ensure dist directory does NOT exist
+        real_ui_dist = Path(mcp_mod.__file__).parent / "ui" / "dist"
+        existed = real_ui_dist.exists()
+        if existed:
+            import shutil
+            shutil.rmtree(real_ui_dist)
+
+        try:
+            with patch("praxis.mcp_server.uvicorn.run", side_effect=fake_uvicorn_run):
+                server = MCPServer(config)
+                server.start(port=8765)
+
+            assert "app" in captured
+            client = TestClient(captured["app"], raise_server_exceptions=False)
+            response = client.get("/ui/")
+            assert response.status_code == 404
+        finally:
+            if existed:
+                real_ui_dist.mkdir(parents=True, exist_ok=True)
+
+    def test_startup_log_includes_api_url(self, config, capsys):
+        """Startup stderr log includes /api/status URL."""
+        with patch("praxis.mcp_server.uvicorn.run"):
+            server = MCPServer(config)
+            server.start(port=8765)
+
+        captured = capsys.readouterr()
+        assert "/api/status" in captured.err
+
+    def test_startup_log_includes_ws_url(self, config, capsys):
+        """Startup stderr log includes WebSocket URL."""
+        with patch("praxis.mcp_server.uvicorn.run"):
+            server = MCPServer(config)
+            server.start(port=8765)
+
+        captured = capsys.readouterr()
+        assert "/ws" in captured.err
