@@ -10,6 +10,7 @@ specific error handling and _resolve_model() for model ID mapping.
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING, Any
 
 from .base import Runtime, ToolExecutor
@@ -21,6 +22,19 @@ if TYPE_CHECKING:
 MAX_TURNS = 50
 MAX_CONTEXT_MESSAGES = 40   # trigger compaction above this
 CONTEXT_KEEP_RECENT = 10    # keep last N messages verbatim
+
+# Token-based compaction: per-model context windows (OpenAI and compatible)
+_OPENAI_MODEL_CONTEXT_LIMITS: dict[str, int] = {
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4-turbo": 128_000,
+    "gpt-4": 8_192,
+    "gpt-3.5-turbo": 16_385,
+    "o1": 200_000,
+    "o1-mini": 128_000,
+    "o3-mini": 200_000,
+}
+_OPENAI_DEFAULT_CONTEXT_LIMIT: int = 128_000
 
 
 class OpenAIBaseRuntime(Runtime):
@@ -44,6 +58,7 @@ class OpenAIBaseRuntime(Runtime):
         self.base_url = base_url
         self._cost_breaker = CostCircuitBreaker.from_env()
         self._current_mode: "Mode | None" = None
+        self._session_tokens: int = 0
 
     def run_loop(
         self,
@@ -88,11 +103,10 @@ class OpenAIBaseRuntime(Runtime):
             usage = getattr(response, "usage", None)
             if usage is not None:
                 try:
-                    self._cost_breaker.record_call(
-                        resolved_model,
-                        int(getattr(usage, "prompt_tokens", 0) or 0),
-                        int(getattr(usage, "completion_tokens", 0) or 0),
-                    )
+                    in_tok = int(getattr(usage, "prompt_tokens", 0) or 0)
+                    out_tok = int(getattr(usage, "completion_tokens", 0) or 0)
+                    self._cost_breaker.record_call(resolved_model, in_tok, out_tok)
+                    self._session_tokens += in_tok + out_tok
                 except (TypeError, ValueError):
                     pass
 
@@ -121,6 +135,9 @@ class OpenAIBaseRuntime(Runtime):
                     for tc in msg.tool_calls
                 ]
             messages = self.manage_context(messages, "assistant", assistant_entry)
+            messages = self._maybe_compact(
+                messages, system=effective_system, model=resolved_model
+            )
 
             last_content = msg.content or ""
 
@@ -301,6 +318,88 @@ class OpenAIBaseRuntime(Runtime):
         if isinstance(content, str):
             return f"  {role.capitalize()}: {content[:100]}"
         return None
+
+    def _maybe_compact(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        system: str,
+        model: str,
+    ) -> list[dict[str, Any]]:
+        """Token-based compaction: if accumulated tokens >= threshold, call LLM for a summary.
+
+        Reads PRAXIS_COMPACTION_THRESHOLD (default 0.8) and PRAXIS_COMPACTION_RESERVE
+        (default 2048 — max_tokens for the summary call).
+        On success: rebuilds history as [system, summary_user, ack_asst] + last 8 pairs,
+        resets _session_tokens to 0, emits COMPACTION_FIRED event.
+        On failure: returns messages unchanged (compaction is best-effort).
+        """
+        threshold = float(os.environ.get("PRAXIS_COMPACTION_THRESHOLD", "0.8"))
+        max_ctx = _OPENAI_MODEL_CONTEXT_LIMITS.get(model, _OPENAI_DEFAULT_CONTEXT_LIMIT)
+
+        if self._session_tokens < max_ctx * threshold:
+            return messages  # below threshold — nothing to do
+
+        compaction_prompt = (
+            "Please summarize the conversation so far concisely but completely, "
+            "capturing all important context, decisions, results, and current state. "
+            "Focus on facts and outcomes. "
+            "This summary will replace the older messages in the context window."
+        )
+        # Build compaction input: system msg + conversation + compaction request
+        compact_input: list[dict[str, Any]] = (
+            [{"role": "system", "content": system}]
+            + messages
+            + [{"role": "user", "content": compaction_prompt}]
+        )
+        reserve = int(os.environ.get("PRAXIS_COMPACTION_RESERVE", "2048"))
+
+        try:
+            resp = self._call_api(
+                model=model,
+                messages=compact_input,
+                max_tokens=reserve,
+            )
+            summary_text = self._extract_text(resp)
+        except Exception:
+            return messages  # compaction failed — return unchanged
+
+        # Keep last 8 pairs (16 messages), aligned to a user-message boundary
+        keep = min(16, len(messages))
+        recent = messages[-keep:]
+        while recent and recent[0].get("role") != "user":
+            recent = recent[1:]
+
+        new_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"[Compacted context]\n{summary_text}"},
+            {"role": "assistant", "content": "Understood. Context has been summarized."},
+        ] + recent
+
+        self._session_tokens = 0
+
+        try:
+            from praxis.event_bus import get_event_bus, COMPACTION_FIRED
+            get_event_bus().publish_sync(
+                COMPACTION_FIRED,
+                {
+                    "model": model,
+                    "messages_before": len(messages),
+                    "messages_after": len(new_messages),
+                },
+            )
+        except Exception:
+            pass
+
+        return new_messages
+
+    @staticmethod
+    def _extract_text(response: Any) -> str:
+        """Extract text content from an OpenAI chat completion response."""
+        if not response.choices:
+            return ""
+        content = response.choices[0].message.content
+        return content if content is not None else ""
 
     def _resolve_model(self, model: str) -> str:
         """Map model IDs. Default: pass through unchanged.

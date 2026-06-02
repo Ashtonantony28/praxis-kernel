@@ -498,7 +498,7 @@
     "depends_on": [
       "compaction-claude-runtime"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "semantic-store-core",
