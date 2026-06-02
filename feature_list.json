@@ -532,7 +532,7 @@
     "depends_on": [
       "semantic-store-core"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "hooks-file-watcher",
