@@ -611,3 +611,375 @@ class TestDeleteQueueTask:
             response = asyncio.run(delete_queue_task(req))
 
         assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /api/approvals
+# ---------------------------------------------------------------------------
+
+def _make_get_request(query_params: dict | None = None, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request for GET endpoints."""
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.query_params = query_params or {}
+    req.path_params = {}
+    return req
+
+
+def _make_approval_post_request(
+    path_params: dict, body: dict | None = None, auth_header: str = ""
+) -> MagicMock:
+    """Return a mock Starlette Request for POST approval endpoints."""
+    import asyncio
+    import json
+
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.path_params = path_params
+    req.query_params = {}
+    if body is not None:
+        raw = json.dumps(body).encode()
+        async def _json():
+            return json.loads(raw)
+        req.json = _json
+    return req
+
+
+class TestGetApprovals:
+    def test_approvals_list_empty(self, tmp_path):
+        """get_approvals() returns empty list when staging dir does not exist."""
+        import asyncio
+        import json
+        from praxis.api import get_approvals
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_get_request()
+            response = asyncio.run(get_approvals(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body == {"items": []}
+
+    def test_approvals_list_with_external_actions(self, tmp_path):
+        """get_approvals() returns pending external actions from external_actions.jsonl."""
+        import asyncio
+        import json
+        import uuid
+        from praxis.api import get_approvals
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True, exist_ok=True)
+        action_id = str(uuid.uuid4())
+        entry = {
+            "id": action_id,
+            "provider": "notion",
+            "action": "create_page",
+            "params": {"title": "Test Page"},
+            "queued_at": "2026-06-01T12:00:00+00:00",
+            "status": "pending",
+        }
+        (staging / "external_actions.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_get_request()
+            response = asyncio.run(get_approvals(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert len(body["items"]) == 1
+        item = body["items"][0]
+        assert item["id"] == action_id
+        assert item["status"] == "pending"
+        assert item["provider"] == "notion"
+
+    def test_approvals_list_excludes_already_approved(self, tmp_path):
+        """get_approvals() excludes entries with status != 'pending'."""
+        import asyncio
+        import json
+        import uuid
+        from praxis.api import get_approvals
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"id": str(uuid.uuid4()), "provider": "notion", "action": "create_page",
+             "params": {}, "queued_at": "2026-06-01T12:00:00+00:00", "status": "pending"},
+            {"id": str(uuid.uuid4()), "provider": "linear", "action": "create_issue",
+             "params": {}, "queued_at": "2026-06-01T11:00:00+00:00", "status": "approved"},
+        ]
+        text = "\n".join(json.dumps(e) for e in entries) + "\n"
+        (staging / "external_actions.jsonl").write_text(text, encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_get_request()
+            response = asyncio.run(get_approvals(req))
+
+        body = json.loads(response.body)
+        assert len(body["items"]) == 1
+        assert body["items"][0]["status"] == "pending"
+
+    def test_approvals_list_401_bad_token(self, tmp_path):
+        """get_approvals() returns 401 when token is wrong."""
+        import asyncio
+        from praxis.api import get_approvals
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "secret", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_get_request(auth_header="Bearer wrong")
+            response = asyncio.run(get_approvals(req))
+
+        assert response.status_code == 401
+
+    def test_approvals_list_includes_slack_messages(self, tmp_path):
+        """get_approvals() includes staged Slack messages."""
+        import asyncio
+        import json
+        import uuid
+        from praxis.api import get_approvals
+
+        msg_id = str(uuid.uuid4())
+        msg_dir = tmp_path / ".praxis" / "staging" / "slack" / "messages"
+        msg_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "id": msg_id,
+            "created_at": "2026-06-01T12:00:00",
+            "recipient": "alice",
+            "message": "Hello from staging",
+            "status": "staged",
+        }
+        (msg_dir / f"{msg_id}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_get_request()
+            response = asyncio.run(get_approvals(req))
+
+        body = json.loads(response.body)
+        ids = [it["id"] for it in body["items"]]
+        assert msg_id in ids
+
+
+# ---------------------------------------------------------------------------
+# POST /api/approvals/{id}/approve  and  /reject
+# ---------------------------------------------------------------------------
+
+class TestPostApprovalAction:
+    def test_approval_approve_sets_status(self, tmp_path):
+        """post_approval_action() sets status to 'approved' for an external action."""
+        import asyncio
+        import json
+        import uuid
+        from unittest.mock import patch as _patch
+        from praxis.api import post_approval_action
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True, exist_ok=True)
+        action_id = str(uuid.uuid4())
+        entry = {
+            "id": action_id,
+            "provider": "notion",
+            "action": "create_page",
+            "params": {"title": "Test Page"},
+            "queued_at": "2026-06-01T12:00:00+00:00",
+            "status": "pending",
+        }
+        (staging / "external_actions.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            with _patch("praxis.__main__._execute_approved_action", return_value="ok: created"):
+                req = _make_approval_post_request({"approval_id": action_id, "action": "approve"})
+                response = asyncio.run(post_approval_action(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["status"] == "approved"
+        assert body["id"] == action_id
+
+        # Verify file was rewritten.
+        updated = json.loads((staging / "external_actions.jsonl").read_text())
+        assert updated["status"] == "approved"
+
+    def test_approval_reject_sets_status(self, tmp_path):
+        """post_approval_action() sets status to 'rejected' for an external action."""
+        import asyncio
+        import json
+        import uuid
+        from praxis.api import post_approval_action
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True, exist_ok=True)
+        action_id = str(uuid.uuid4())
+        entry = {
+            "id": action_id,
+            "provider": "linear",
+            "action": "create_issue",
+            "params": {"title": "Bug"},
+            "queued_at": "2026-06-01T12:00:00+00:00",
+            "status": "pending",
+        }
+        (staging / "external_actions.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_approval_post_request({"approval_id": action_id, "action": "reject"})
+            response = asyncio.run(post_approval_action(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["status"] == "rejected"
+
+    def test_approval_action_404_not_found(self, tmp_path):
+        """post_approval_action() returns 404 when the approval_id does not exist."""
+        import asyncio
+        from praxis.api import post_approval_action
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_approval_post_request({"approval_id": "doesnotexist", "action": "approve"})
+            response = asyncio.run(post_approval_action(req))
+
+        assert response.status_code == 404
+
+    def test_approval_approve_slack_message(self, tmp_path):
+        """post_approval_action() approves a staged Slack message."""
+        import asyncio
+        import json
+        import uuid
+        from praxis.api import post_approval_action
+
+        msg_id = str(uuid.uuid4())
+        msg_dir = tmp_path / ".praxis" / "staging" / "slack" / "messages"
+        msg_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "id": msg_id,
+            "created_at": "2026-06-01T12:00:00",
+            "recipient": "alice",
+            "message": "Hello",
+            "status": "staged",
+        }
+        (msg_dir / f"{msg_id}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_approval_post_request({"approval_id": msg_id, "action": "approve"})
+            response = asyncio.run(post_approval_action(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["status"] == "approved"
+
+        updated = json.loads((msg_dir / f"{msg_id}.json").read_text())
+        assert updated["status"] == "approved"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/approvals/bulk
+# ---------------------------------------------------------------------------
+
+class TestPostApprovalsBulk:
+    def test_approvals_bulk_approve_all(self, tmp_path):
+        """post_approvals_bulk() approves all specified items."""
+        import asyncio
+        import json
+        import uuid
+        from unittest.mock import patch as _patch
+        from praxis.api import post_approvals_bulk
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True, exist_ok=True)
+
+        ids = [str(uuid.uuid4()) for _ in range(3)]
+        lines = []
+        for aid in ids:
+            lines.append(json.dumps({
+                "id": aid, "provider": "notion", "action": "create_page",
+                "params": {}, "queued_at": "2026-06-01T12:00:00+00:00", "status": "pending",
+            }))
+        (staging / "external_actions.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            with _patch("praxis.__main__._execute_approved_action", return_value="ok"):
+                req = _make_approval_post_request(
+                    path_params={},
+                    body={"ids": ids, "action": "approve"},
+                )
+                response = asyncio.run(post_approvals_bulk(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        results = body["results"]
+        assert len(results) == 3
+        for r in results:
+            assert r["status"] == "approved"
+
+    def test_approvals_bulk_reject_all(self, tmp_path):
+        """post_approvals_bulk() rejects all specified items."""
+        import asyncio
+        import json
+        import uuid
+        from praxis.api import post_approvals_bulk
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True, exist_ok=True)
+
+        ids = [str(uuid.uuid4()) for _ in range(2)]
+        lines = []
+        for aid in ids:
+            lines.append(json.dumps({
+                "id": aid, "provider": "linear", "action": "create_issue",
+                "params": {}, "queued_at": "2026-06-01T12:00:00+00:00", "status": "pending",
+            }))
+        (staging / "external_actions.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_approval_post_request(
+                path_params={},
+                body={"ids": ids, "action": "reject"},
+            )
+            response = asyncio.run(post_approvals_bulk(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        results = body["results"]
+        assert all(r["status"] == "rejected" for r in results)
+
+    def test_approvals_bulk_mixed_found_not_found(self, tmp_path):
+        """post_approvals_bulk() handles a mix of found and not-found ids."""
+        import asyncio
+        import json
+        import uuid
+        from praxis.api import post_approvals_bulk
+
+        staging = tmp_path / ".praxis" / "staging"
+        staging.mkdir(parents=True, exist_ok=True)
+
+        real_id = str(uuid.uuid4())
+        fake_id = "does-not-exist"
+        (staging / "external_actions.jsonl").write_text(
+            json.dumps({
+                "id": real_id, "provider": "notion", "action": "create_page",
+                "params": {}, "queued_at": "2026-06-01T12:00:00+00:00", "status": "pending",
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_approval_post_request(
+                path_params={},
+                body={"ids": [real_id, fake_id], "action": "reject"},
+            )
+            response = asyncio.run(post_approvals_bulk(req))
+
+        body = json.loads(response.body)
+        results = {r["id"]: r["status"] for r in body["results"]}
+        assert results[real_id] == "rejected"
+        assert results[fake_id] == "not_found"
+
+    def test_approvals_bulk_400_bad_action(self, tmp_path):
+        """post_approvals_bulk() returns 400 for an invalid action."""
+        import asyncio
+        from praxis.api import post_approvals_bulk
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_approval_post_request(
+                path_params={},
+                body={"ids": [], "action": "execute"},
+            )
+            response = asyncio.run(post_approvals_bulk(req))
+
+        assert response.status_code == 400

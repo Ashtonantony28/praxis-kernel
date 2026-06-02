@@ -344,3 +344,370 @@ async def delete_queue_task(request: Request) -> Response:
 
     queue.update_status(task_id, "failed", error="cancelled")
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# Approvals — staging file helpers
+# ---------------------------------------------------------------------------
+
+def _scan_staging_items(root: Path) -> list[dict]:
+    """Return all pending/staged approval items across .praxis/staging/.
+
+    Covers:
+    - external_actions.jsonl  (status == "pending")
+    - wiki_updates.jsonl      (status == "pending")
+    - slack/messages/*.json   (status not in ("approved", "rejected"))
+    - events/*.ics            (no sidecar or sidecar status != approved/rejected)
+    - drafts/*.eml            (no sidecar or sidecar status != approved/rejected)
+    """
+    import json as _json
+
+    staging = root / ".praxis" / "staging"
+    items: list[dict] = []
+
+    if not staging.exists():
+        return items
+
+    # 1. external_actions.jsonl
+    actions_file = staging / "external_actions.jsonl"
+    if actions_file.exists():
+        for line in actions_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = _json.loads(line)
+                if entry.get("status") == "pending":
+                    item = dict(entry)
+                    item["_source_file"] = str(actions_file.relative_to(root))
+                    item["_item_type"] = "external_action"
+                    item.setdefault("summary", f"[{entry.get('provider','?')}] {entry.get('action','?')}")
+                    items.append(item)
+            except _json.JSONDecodeError:
+                pass
+
+    # 2. wiki_updates.jsonl
+    wiki_file = staging / "wiki_updates.jsonl"
+    if wiki_file.exists():
+        for line in wiki_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = _json.loads(line)
+                if entry.get("status") == "pending":
+                    item = dict(entry)
+                    item["_source_file"] = str(wiki_file.relative_to(root))
+                    item["_item_type"] = "wiki_update"
+                    item.setdefault("summary", f"wiki: {entry.get('page_slug','?')} ({entry.get('linear_issue_id','?')})")
+                    items.append(item)
+            except _json.JSONDecodeError:
+                pass
+
+    # 3. slack/messages/*.json
+    slack_msgs_dir = staging / "slack" / "messages"
+    if slack_msgs_dir.exists():
+        for msg_file in sorted(slack_msgs_dir.glob("*.json")):
+            try:
+                entry = _json.loads(msg_file.read_text(encoding="utf-8"))
+                status = entry.get("status", "staged")
+                if status not in ("approved", "rejected"):
+                    item = dict(entry)
+                    item.setdefault("id", msg_file.stem)
+                    item["_source_file"] = str(msg_file.relative_to(root))
+                    item["_item_type"] = "slack_message"
+                    item.setdefault("summary", f"slack: {entry.get('recipient','?')}: {str(entry.get('message',''))[:60]}")
+                    items.append(item)
+            except Exception:
+                pass
+
+    # 4. events/*.ics — use sidecar .json for status
+    events_dir = staging / "events"
+    if events_dir.exists():
+        for ics_file in sorted(events_dir.glob("*.ics")):
+            sidecar = ics_file.with_suffix(".json")
+            status = "pending"
+            sidecar_data: dict = {}
+            if sidecar.exists():
+                try:
+                    sidecar_data = _json.loads(sidecar.read_text(encoding="utf-8"))
+                    status = sidecar_data.get("status", "pending")
+                except Exception:
+                    pass
+            if status not in ("approved", "rejected"):
+                item: dict = {
+                    "id": ics_file.stem,
+                    "status": status,
+                    "_source_file": str(ics_file.relative_to(root)),
+                    "_item_type": "calendar_event",
+                    "summary": f"calendar: {ics_file.stem}",
+                }
+                item.update(sidecar_data)
+                item["id"] = ics_file.stem
+                item["_source_file"] = str(ics_file.relative_to(root))
+                item["_item_type"] = "calendar_event"
+                items.append(item)
+
+    # 5. drafts/*.eml — use sidecar .json for status
+    drafts_dir = staging / "drafts"
+    if drafts_dir.exists():
+        for eml_file in sorted(drafts_dir.glob("*.eml")):
+            sidecar = eml_file.with_suffix(".json")
+            status = "pending"
+            sidecar_data = {}
+            if sidecar.exists():
+                try:
+                    sidecar_data = _json.loads(sidecar.read_text(encoding="utf-8"))
+                    status = sidecar_data.get("status", "pending")
+                except Exception:
+                    pass
+            if status not in ("approved", "rejected"):
+                item = {
+                    "id": eml_file.stem,
+                    "status": status,
+                    "_source_file": str(eml_file.relative_to(root)),
+                    "_item_type": "email_draft",
+                    "summary": f"email: {eml_file.stem}",
+                }
+                item.update(sidecar_data)
+                item["id"] = eml_file.stem
+                item["_source_file"] = str(eml_file.relative_to(root))
+                item["_item_type"] = "email_draft"
+                items.append(item)
+
+    return items
+
+
+def _apply_approval_action(root: Path, approval_id: str, action: str) -> dict | None:
+    """Find a staging item by id, set its status, execute if approving an external action.
+
+    Returns the updated item dict, or None if the item was not found.
+    ``action`` must be "approve" or "reject".
+    """
+    import json as _json
+
+    new_status = "approved" if action == "approve" else "rejected"
+    staging = root / ".praxis" / "staging"
+
+    # 1. Search external_actions.jsonl
+    actions_file = staging / "external_actions.jsonl"
+    if actions_file.exists():
+        entries: list[dict] = []
+        found_entry: dict | None = None
+        for line in actions_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = _json.loads(line)
+                entries.append(e)
+                if e.get("id") == approval_id:
+                    found_entry = e
+            except _json.JSONDecodeError:
+                pass
+        if found_entry is not None:
+            found_entry["status"] = new_status
+            if action == "approve":
+                try:
+                    from praxis.__main__ import _execute_approved_action
+                    result = _execute_approved_action(found_entry)
+                    found_entry["executed_result"] = result
+                except Exception as exc:
+                    found_entry["executed_result"] = f"error: {exc}"
+            # Rewrite file
+            with actions_file.open("w", encoding="utf-8") as f:
+                for e in entries:
+                    f.write(_json.dumps(e) + "\n")
+            return dict(found_entry)
+
+    # 2. Search wiki_updates.jsonl
+    wiki_file = staging / "wiki_updates.jsonl"
+    if wiki_file.exists():
+        entries = []
+        found_entry = None
+        for line in wiki_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = _json.loads(line)
+                entries.append(e)
+                if e.get("id") == approval_id:
+                    found_entry = e
+            except _json.JSONDecodeError:
+                pass
+        if found_entry is not None:
+            found_entry["status"] = new_status
+            with wiki_file.open("w", encoding="utf-8") as f:
+                for e in entries:
+                    f.write(_json.dumps(e) + "\n")
+            return dict(found_entry)
+
+    # 3. slack/messages/{approval_id}.json
+    slack_file = staging / "slack" / "messages" / f"{approval_id}.json"
+    if slack_file.exists():
+        try:
+            entry = _json.loads(slack_file.read_text(encoding="utf-8"))
+            entry["status"] = new_status
+            slack_file.write_text(_json.dumps(entry, indent=2), encoding="utf-8")
+            return dict(entry)
+        except Exception:
+            pass
+
+    # 4. events/{approval_id}.ics — update sidecar
+    ics_file = staging / "events" / f"{approval_id}.ics"
+    if ics_file.exists():
+        sidecar = ics_file.with_suffix(".json")
+        sidecar_data: dict = {}
+        if sidecar.exists():
+            try:
+                sidecar_data = _json.loads(sidecar.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        sidecar_data["id"] = approval_id
+        sidecar_data["status"] = new_status
+        sidecar.write_text(_json.dumps(sidecar_data, indent=2), encoding="utf-8")
+        return {"id": approval_id, "status": new_status, "_item_type": "calendar_event"}
+
+    # 5. drafts/{approval_id}.eml — update sidecar
+    eml_file = staging / "drafts" / f"{approval_id}.eml"
+    if eml_file.exists():
+        sidecar = eml_file.with_suffix(".json")
+        sidecar_data = {}
+        if sidecar.exists():
+            try:
+                sidecar_data = _json.loads(sidecar.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        sidecar_data["id"] = approval_id
+        sidecar_data["status"] = new_status
+        sidecar.write_text(_json.dumps(sidecar_data, indent=2), encoding="utf-8")
+        return {"id": approval_id, "status": new_status, "_item_type": "email_draft"}
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Approvals route handlers
+# ---------------------------------------------------------------------------
+
+async def get_approvals(request: Request) -> Response:
+    """GET /api/approvals — list all pending staged external actions.
+
+    Returns::
+
+        {
+          "items": [
+            {
+              "id": "...",
+              "type": "external_action | wiki_update | slack_message | ...",
+              "status": "pending",
+              "summary": "human-readable description",
+              ...original fields...
+            },
+            ...
+          ]
+        }
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    root = _workspace_root()
+    items = _scan_staging_items(root)
+    return JSONResponse({"items": items})
+
+
+async def post_approval_action(request: Request) -> Response:
+    """POST /api/approvals/{approval_id}/approve  or  /reject.
+
+    Finds the item by id across all staging files, sets its status, and (for
+    external_actions) executes the approved action.
+
+    Returns::
+
+        {
+          "id": "...",
+          "status": "approved" | "rejected",
+          ...updated fields...
+        }
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    approval_id = request.path_params.get("approval_id", "")
+    action = request.path_params.get("action", "")
+
+    if action not in ("approve", "reject"):
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "Action must be 'approve' or 'reject'"},
+            status_code=400,
+        )
+
+    root = _workspace_root()
+    result = _apply_approval_action(root, approval_id, action)
+
+    if result is None:
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Approval '{approval_id}' not found"},
+            status_code=404,
+        )
+
+    return JSONResponse(result)
+
+
+async def post_approvals_bulk(request: Request) -> Response:
+    """POST /api/approvals/bulk — approve or reject multiple items at once.
+
+    Request body::
+
+        {
+          "ids": ["id1", "id2", ...],
+          "action": "approve" | "reject"
+        }
+
+    Returns::
+
+        {
+          "results": [
+            {"id": "id1", "status": "approved"},
+            {"id": "id2", "status": "not_found"},
+            ...
+          ]
+        }
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "Request body must be valid JSON"},
+            status_code=400,
+        )
+
+    ids = body.get("ids", [])
+    action = body.get("action", "")
+
+    if not isinstance(ids, list) or action not in ("approve", "reject"):
+        return JSONResponse(
+            {
+                "error": "Bad Request",
+                "detail": "Expected {\"ids\": [...], \"action\": \"approve\"|\"reject\"}",
+            },
+            status_code=400,
+        )
+
+    root = _workspace_root()
+    results = []
+    for approval_id in ids:
+        item_result = _apply_approval_action(root, str(approval_id), action)
+        if item_result is None:
+            results.append({"id": approval_id, "status": "not_found"})
+        else:
+            results.append({"id": approval_id, "status": item_result.get("status", "unknown")})
+
+    return JSONResponse({"results": results})

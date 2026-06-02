@@ -46,7 +46,7 @@
     "id": "wizard-domains-additive",
     "category": "infra",
     "priority": 4,
-    "description": "PRAXIS_ALLOWED_DOMAINS appending is additive across all wizard steps \u2014 preserves existing, no duplicates",
+    "description": "PRAXIS_ALLOWED_DOMAINS appending is additive across all wizard steps — preserves existing, no duplicates",
     "steps": [
       "Extract _append_allowed_domain(env_file, domain) helper: read current value, split by comma, add only if not present, write back",
       "Use this helper in wizard-linear-step, wizard-notion-step, wizard-calendar-step",
@@ -66,7 +66,7 @@
       "Create praxis/event_bus.py: EventBus class with subscribe(), unsubscribe(), async publish(), publish_sync(); thread-safe with asyncio.Lock; queue maxsize=100; drop-on-full with stderr warning",
       "Module-level constants: TASK_QUEUED, TASK_STARTED, TASK_TOKEN, TASK_COMPLETED, TASK_FAILED, APPROVAL_ADDED, SCHEDULE_FIRED, AMBIENT_TRIGGERED, COMPACTION_FIRED, HEARTBEAT",
       "get_event_bus() returns process-level singleton; publish_sync handles both running-loop and no-loop cases",
-      "Verify: python -m pytest tests/test_event_bus.py -v \u2014 all 25+ tests pass"
+      "Verify: python -m pytest tests/test_event_bus.py -v — all 25+ tests pass"
     ],
     "depends_on": [],
     "passes": true
@@ -166,17 +166,17 @@
     "id": "api-approvals",
     "category": "api",
     "priority": 13,
-    "description": "GET /api/approvals list, POST approve/reject/bulk \u2014 scanning all staging files",
+    "description": "GET /api/approvals list, POST approve/reject/bulk — scanning all staging files",
     "steps": [
       "GET /api/approvals: scan .praxis/staging/external_actions.jsonl, slack/messages/*.json, events/*.ics, drafts/*.eml, wiki_updates.jsonl; return pending items as list",
       "POST /api/approvals/{id}/approve and /reject: find item by id field across staging files; update status; reuse --approve code path from __main__.py",
-      "POST /api/approvals/bulk: {ids, action} \u2014 call approve/reject per id; return {results: [{id, status}]}",
+      "POST /api/approvals/bulk: {ids, action} — call approve/reject per id; return {results: [{id, status}]}",
       "Verify: test_approvals_list_empty, test_approvals_list_with_external_actions, test_approval_approve_sets_status, test_approvals_bulk_approve_all pass"
     ],
     "depends_on": [
       "api-queue-mutations"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "api-schedule",
@@ -298,7 +298,7 @@
     "priority": 23,
     "description": "App router with React Router and sidebar Layout with nav badges",
     "steps": [
-      "Create src/App.tsx: BrowserRouter with routes / \u2192 Chat, /approvals \u2192 Approvals, /tasks \u2192 Tasks, /wiki \u2192 Wiki, /wiki/:slug \u2192 WikiPage, /schedule \u2192 Schedule, /settings \u2192 Settings; initialize WebSocket on mount",
+      "Create src/App.tsx: BrowserRouter with routes / → Chat, /approvals → Approvals, /tasks → Tasks, /wiki → Wiki, /wiki/:slug → WikiPage, /schedule → Schedule, /settings → Settings; initialize WebSocket on mount",
       "Create src/components/Layout.tsx: fixed-width sidebar (52px) with icon nav buttons using lucide-react; orange badge on Approvals showing pendingApprovals from ws store; cyan badge on Tasks showing runningTasks",
       "Verify: npm run build succeeds; http://localhost:5173/ui/ loads in dev mode"
     ],
@@ -333,7 +333,7 @@
       "Create src/screens/Approvals.tsx: fetch GET /api/approvals; refetch on approval.added WebSocket event",
       "Per-card: provider icon (N for Notion, colored dot for Linear, mail for email), action name, time ago, checkbox; params in monospace dark block; Approve (green) / Reject (red) buttons; on action: fade card, decrement badge",
       "Bulk bar (shown when items selected): 'N items selected' + 'Approve selected' + 'Reject selected'; calls POST /api/approvals/bulk",
-      "Empty state: checkmark icon + 'All clear \u2014 nothing needs your approval'",
+      "Empty state: checkmark icon + 'All clear — nothing needs your approval'",
       "Browser notifications: request permission on mount; send Notification on approval.added when page not focused",
       "Verify: pending approvals appear; approve/reject updates state; badge decrements"
     ],
@@ -349,9 +349,9 @@
     "description": "Task Board: 4-column kanban (Pending/Running/Done/Failed), task detail drawer",
     "steps": [
       "Create src/screens/TaskBoard.tsx: 4-column CSS grid; fetch GET /api/queue on load; refetch on task.* WebSocket events",
-      "Pending column: cards with prompt_preview, priority badge, 'queued N min ago'; Cancel button (\u00d7) \u2192 DELETE /api/queue/{id}",
+      "Pending column: cards with prompt_preview, priority badge, 'queued N min ago'; Cancel button (×) → DELETE /api/queue/{id}",
       "Running column: pulsing cyan dot in header; cards with elapsed timer (update every 5s); animated left border",
-      "Done column: green header badge; Failed column: red header badge with error_preview; Retry button \u2192 POST /api/queue re-submit same prompt",
+      "Done column: green header badge; Failed column: red header badge with error_preview; Retry button → POST /api/queue re-submit same prompt",
       "Task detail drawer: slides in from right on card click; full prompt, full result (markdown), error, retry history; close button",
       "Verify: tasks appear in correct columns; running tasks show elapsed time; cancel removes card"
     ],
@@ -366,9 +366,9 @@
     "priority": 27,
     "description": "Wiki Browser: entity list with search, markdown page viewer with frontmatter, ingest button",
     "steps": [
-      "Create src/screens/Wiki.tsx: search bar \u2192 GET /api/wiki/search?q=; left panel entity list from GET /api/wiki/pages grouped by type (People/Projects/Other); click \u2192 navigate to /wiki/:slug",
+      "Create src/screens/Wiki.tsx: search bar → GET /api/wiki/search?q=; left panel entity list from GET /api/wiki/pages grouped by type (People/Projects/Other); click → navigate to /wiki/:slug",
       "Create src/screens/WikiPage.tsx: GET /api/wiki/pages/:slug; render with react-markdown + remark-gfm; frontmatter badges (valid_from, entity_type); yellow superseded banner if superseded_on set; typed links as clickable pills",
-      "Ingest button: file picker \u2192 POST /api/wiki/ingest (if endpoint exists, else show TODO toast)",
+      "Ingest button: file picker → POST /api/wiki/ingest (if endpoint exists, else show TODO toast)",
       "Verify: navigate to Wiki, search for a page slug, see rendered markdown"
     ],
     "depends_on": [
@@ -384,7 +384,7 @@
     "steps": [
       "Create src/screens/Schedule.tsx: fetch GET /api/schedule; table with Name, Cron, Next run, Last run, Enabled toggle, Actions",
       "Toggle: POST /api/schedule/{id}/enable or /disable; Run now: POST /api/schedule/{id}/run-now with brief 'queued' toast; Delete: with confirmation popover",
-      "Add form (shown on '+ Add'): name input, cron input, prompt textarea; human-readable cron preview from simple lookup table (e.g. '0 7 * * *' \u2192 'Every day at 7am'); Submit \u2192 POST /api/schedule",
+      "Add form (shown on '+ Add'): name input, cron input, prompt textarea; human-readable cron preview from simple lookup table (e.g. '0 7 * * *' → 'Every day at 7am'); Submit → POST /api/schedule",
       "Verify: schedules appear; toggle updates enabled state; add form creates schedule"
     ],
     "depends_on": [
@@ -399,10 +399,10 @@
     "description": "Settings: integration health panel, runtime info, SOUL.md and HEARTBEAT.md editors",
     "steps": [
       "Create src/screens/Settings.tsx: 2-column grid of cards",
-      "Card 1 \u2014 Integration Health: GET /api/integrations; per-row: name, status icon (green check/red X/gray minus), message; Refresh button \u2192 POST /api/integrations/validate",
-      "Card 2 \u2014 Runtime Info: GET /api/status; show version, runtime, model, uptime, queue depth in monospace",
-      "Card 3 (full width) \u2014 SOUL.md: GET /api/soul; textarea; Save \u2192 PUT /api/soul",
-      "Card 4 (full width) \u2014 HEARTBEAT.md: same for /api/heartbeat",
+      "Card 1 — Integration Health: GET /api/integrations; per-row: name, status icon (green check/red X/gray minus), message; Refresh button → POST /api/integrations/validate",
+      "Card 2 — Runtime Info: GET /api/status; show version, runtime, model, uptime, queue depth in monospace",
+      "Card 3 (full width) — SOUL.md: GET /api/soul; textarea; Save → PUT /api/soul",
+      "Card 4 (full width) — HEARTBEAT.md: same for /api/heartbeat",
       "Verify: integrations show current status; SOUL.md content loads and saves"
     ],
     "depends_on": [
@@ -433,10 +433,10 @@
     "steps": [
       "Create praxis/trust.py: TrustLevel(IntEnum) with OWNER=0, ADMIN=1, USER=2, BLOCKED=3",
       "TrustStore.__init__(config: dict): reads PRAXIS_OWNER_IDS and PRAXIS_ADMIN_IDS (format 'channel:id,channel:id') from env; reads convergence.yaml channels.<ch>.trust_ids.owner/admin lists; PRAXIS_DEFAULT_TRUST default='user'",
-      "resolve(channel, sender_id) -> TrustLevel: lookup order: env vars \u2192 yaml \u2192 default",
+      "resolve(channel, sender_id) -> TrustLevel: lookup order: env vars → yaml → default",
       "is_read_only_prompt(prompt) -> bool: any keyword in {'query','status','validate','what','show','list','search','tell me','how many','when','who','where','check'} in prompt.lower()",
       "get_trust_store(config) singleton; add PRAXIS_OWNER_IDS/PRAXIS_ADMIN_IDS/PRAXIS_DEFAULT_TRUST to .env.example",
-      "Verify: python -m pytest tests/test_trust.py -v \u2014 25+ tests pass"
+      "Verify: python -m pytest tests/test_trust.py -v — 25+ tests pass"
     ],
     "depends_on": [],
     "passes": false
@@ -447,7 +447,7 @@
     "priority": 41,
     "description": "Wire TrustStore into Telegram, Slack, and WhatsApp message handlers",
     "steps": [
-      "In praxis/integrations/telegram.py message handler: resolve trust for update.effective_user.id; BLOCKED\u2192return silently; USER+write-intent prompt\u2192reply 'I can only answer read-only queries'; ADMIN/OWNER\u2192proceed",
+      "In praxis/integrations/telegram.py message handler: resolve trust for update.effective_user.id; BLOCKED→return silently; USER+write-intent prompt→reply 'I can only answer read-only queries'; ADMIN/OWNER→proceed",
       "In praxis/slack_listener.py: same pattern using event['user'] as sender_id",
       "In praxis/integrations/whatsapp.py: add trust check on top of ALLOWED_NUMBERS; OWNER_IDS format 'whatsapp:number'",
       "Add trust_ids section documentation comment to convergence.yaml",
@@ -468,7 +468,7 @@
       "Add self._session_tokens=0 to __init__; after each API response add input+output tokens to _session_tokens",
       "Add _maybe_compact(messages) -> list: if _session_tokens >= max_ctx * threshold, append compaction prompt, call LLM once, rebuild history (system + summary + last 8 pairs), reset tokens, emit COMPACTION_FIRED event; return new messages",
       "Wire _maybe_compact() into run_loop() after token update; add PRAXIS_COMPACTION_THRESHOLD and PRAXIS_COMPACTION_RESERVE to .env.example",
-      "Verify: tests/test_compaction.py \u2014 triggered at threshold, not below, history rebuilt correctly"
+      "Verify: tests/test_compaction.py — triggered at threshold, not below, history rebuilt correctly"
     ],
     "depends_on": [],
     "passes": false
@@ -500,7 +500,7 @@
       "delete_page(slug), rebuild_index(wiki_root) -> int",
       "get_memory_store(workspace_root) -> SemanticMemoryStore|None: return None if PRAXIS_SEMANTIC_MEMORY != 'true' or deps missing",
       "Add [semantic] dep group: chromadb>=0.4, sentence-transformers>=2.2; add .praxis/memory/chroma/ to .gitignore",
-      "Verify: tests/test_memory_store.py with mocked chromadb \u2014 all 20+ tests pass"
+      "Verify: tests/test_memory_store.py with mocked chromadb — all 20+ tests pass"
     ],
     "depends_on": [],
     "passes": false
@@ -512,7 +512,7 @@
     "description": "Wire semantic memory into wiki.py ingest() and orchestrator context assembly; add CLI flag",
     "steps": [
       "In praxis/wiki.py ingest(): after writing page to disk, call get_memory_store(wiki_root).embed_wiki_page() if store exists",
-      "In praxis/orchestrator.py context assembly (before LLM call): call get_memory_store().search(prompt, top_k) and prepend as '## Relevant memory\\n' block AFTER \u00a75 governance block",
+      "In praxis/orchestrator.py context assembly (before LLM call): call get_memory_store().search(prompt, top_k) and prepend as '## Relevant memory\\n' block AFTER §5 governance block",
       "In praxis/__main__.py: add --rebuild-memory-index flag that calls store.rebuild_index(wiki_root) and prints count",
       "Add PRAXIS_SEMANTIC_MEMORY=true, PRAXIS_SEMANTIC_TOP_K=6 to .env.example",
       "Verify: test_wiki_ingest_calls_embed, test_orchestrator_prepends_semantic_context pass"
@@ -530,8 +530,8 @@
     "steps": [
       "Create praxis/hooks_engine.py: FileWatcher class reading PRAXIS_WATCH_PATHS, PRAXIS_WATCH_EXTENSIONS, PRAXIS_WATCH_DEBOUNCE (default 5s), PRAXIS_WATCH_PROMPT_TEMPLATE",
       "_PraxisEventHandler(FileSystemEventHandler): on CREATE events matching extension: debounce by path, enqueue Task with expanded template prompt, priority=5",
-      "FileWatcher.start() \u2192 background daemon thread with watchdog Observer; stop() \u2192 graceful stop",
-      "IMPORTANT: watcher never reads file content \u2014 only generates a prompt asking orchestrator to use Read tool",
+      "FileWatcher.start() → background daemon thread with watchdog Observer; stop() → graceful stop",
+      "IMPORTANT: watcher never reads file content — only generates a prompt asking orchestrator to use Read tool",
       "Add [hooks] dep group: watchdog>=3.0; add PRAXIS_WATCH_PATHS section to .env.example",
       "Verify: test_file_watcher_enqueues_on_create, test_file_watcher_ignores_non_matching_extension pass"
     ],
@@ -565,7 +565,7 @@
       "transcribe(audio_path, language='en') -> str: raises VoiceTranscriptionError on failure; supports .ogg,.mp3,.m4a,.wav,.webm",
       "get_transcriber() -> VoiceTranscriber|None: singleton if PRAXIS_VOICE_ENABLED=true; None otherwise",
       "Add [voice] dep group: openai>=1.0; add PRAXIS_VOICE_ENABLED, PRAXIS_WHISPER_BACKEND, PRAXIS_WHISPER_LANGUAGE to .env.example",
-      "Verify: tests/test_voice.py with mocked openai \u2014 test_transcriber_returns_none_when_disabled, test_transcribe_calls_whisper_api pass"
+      "Verify: tests/test_voice.py with mocked openai — test_transcriber_returns_none_when_disabled, test_transcribe_calls_whisper_api pass"
     ],
     "depends_on": [],
     "passes": false

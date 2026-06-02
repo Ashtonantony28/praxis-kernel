@@ -112,3 +112,11 @@ Summary: Added three new route handlers to praxis/api.py: post_queue() creates a
 Files changed: praxis/api.py (post_queue, get_queue_task, delete_queue_task handlers), tests/test_api.py (15 new tests in TestPostQueue, TestGetQueueTask, TestDeleteQueueTask), feature_list.json (api-queue-mutations passes=true)
 Next session should: Implement api-approvals (priority 13, depends on api-queue-mutations which now passes) -- GET /api/approvals scans .praxis/staging/ for pending external actions; POST approve/reject/bulk. Scan files: external_actions.jsonl, slack/messages/*.json, events/*.ics, drafts/*.eml, wiki_updates.jsonl. Reuse --approve code path from __main__.py around line 503+; staging files in .praxis/staging/.
 ---
+--- Session 12: api-approvals ---
+Date: 2026-06-02
+Feature: GET api/approvals list, POST approve/reject/bulk - scanning all staging files
+Status: COMPLETE
+Summary: Added _scan_staging_items() helper that reads pending/staged items from external_actions.jsonl, wiki_updates.jsonl, slack/messages/*.json, events/*.ics (sidecar .json for status), and drafts/*.eml. Added _apply_approval_action() that finds item by id across all staging files, updates its status in-place, calls _execute_approved_action from __main__ when approving external actions. Added three route handlers: get_approvals, post_approval_action, post_approvals_bulk. 13 new tests all pass; 1159 total tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/api.py (_scan_staging_items, _apply_approval_action, get_approvals, post_approval_action, post_approvals_bulk), tests/test_api.py (13 new tests in TestGetApprovals, TestPostApprovalAction, TestPostApprovalsBulk), feature_list.json (api-approvals passes=true)
+Next session should: Implement api-schedule (priority 14, depends on api-approvals which now passes) - full CRUD for /api/schedule: GET list, POST add, PUT /{id} update, DELETE /{id}, POST /{id}/enable, /{id}/disable, /{id}/run-now. CronScheduler lives in praxis/scheduler.py; schedule file at .praxis/schedule/tasks.json. Also eligible: trust-store-core (priority 40, no depends_on) and compaction-claude-runtime (priority 42, no depends_on).
+---
