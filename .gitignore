@@ -40,6 +40,8 @@ wiki/log.md
 # Operational state — never commit
 .praxis/memory/*
 !.praxis/memory/.gitkeep
+# ChromaDB vector store for semantic memory (generated, gitignored by parent rule above)
+.praxis/memory/chroma/
 .praxis/staging/*
 !.praxis/staging/.gitkeep
 .praxis/queue/*

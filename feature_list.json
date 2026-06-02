@@ -515,7 +515,7 @@
       "Verify: tests/test_memory_store.py with mocked chromadb \u2014 all 20+ tests pass"
     ],
     "depends_on": [],
-    "passes": false
+    "passes": true
   },
   {
     "id": "semantic-wiring",
