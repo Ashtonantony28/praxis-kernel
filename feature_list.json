@@ -226,7 +226,7 @@
     "depends_on": [
       "api-wiki-memory-integrations"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "mcp-routes-host-static",
