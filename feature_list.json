@@ -260,7 +260,7 @@
     "depends_on": [
       "mcp-routes-host-static"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "ui-design-system",

@@ -49,6 +49,10 @@ wiki/log.md
 .praxis/praxis.pid
 .praxis/schedule/*
 
+# UI build artifacts — never commit
+praxis/ui/node_modules/
+praxis/ui/dist/
+
 # WhatsApp bridge session — contains account credentials, never commit
 whatsapp-bridge/session/*
 !whatsapp-bridge/session/.gitkeep

@@ -88,10 +88,18 @@ class EventBus:
         event from interleaving.  Each subscriber's queue receives a
         *put_nowait*; if the queue is full the event is dropped and a warning
         is emitted to *stderr*.
+
+        Wildcard subscribers (subscribed to ``"*"``) receive an envelope dict
+        ``{"type": event, "data": payload}`` so they can identify the event type.
         """
         async with self._async_lock:
             with self._lock:
                 queues = list(self._subscribers.get(event, []))
+                wildcard_queues = (
+                    list(self._subscribers.get("*", []))
+                    if event != "*"
+                    else []
+                )
 
         for q in queues:
             try:
@@ -99,6 +107,16 @@ class EventBus:
             except asyncio.QueueFull:
                 print(
                     f"[EventBus] subscriber queue full for event {event!r}; dropping payload",
+                    file=sys.stderr,
+                )
+
+        envelope = {"type": event, "data": payload}
+        for q in wildcard_queues:
+            try:
+                q.put_nowait(envelope)
+            except asyncio.QueueFull:
+                print(
+                    f"[EventBus] wildcard subscriber queue full for event {event!r}; dropping payload",
                     file=sys.stderr,
                 )
 

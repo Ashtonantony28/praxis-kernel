@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -1965,3 +1965,72 @@ class TestSoulHeartbeat:
             response = asyncio.run(put_heartbeat(req))
 
         assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# ws_endpoint — WebSocket event streaming
+# ---------------------------------------------------------------------------
+
+class TestWsEndpoint:
+    def test_ws_auth_rejected_without_token(self):
+        """ws_endpoint closes with code 4403 when token auth fails."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from praxis.api import ws_endpoint
+
+        ws = MagicMock()
+        ws.query_params = {}
+        ws.headers = {}
+        ws.close = AsyncMock()
+        ws.accept = AsyncMock()
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "secret123"}):
+            asyncio.run(ws_endpoint(ws))
+
+        ws.close.assert_called_once_with(code=4403)
+        ws.accept.assert_not_called()
+
+    def test_ws_receives_events(self):
+        """ws_endpoint subscribes to EventBus '*' and sends events as JSON."""
+        import asyncio
+        import json
+
+        from starlette.websockets import WebSocketDisconnect
+
+        from praxis.api import ws_endpoint
+        from praxis.event_bus import EventBus
+
+        ws = MagicMock()
+        ws.query_params = {}
+        ws.headers = {}
+        ws.accept = AsyncMock()
+
+        sent_texts: list[str] = []
+
+        async def fake_send_text(text: str) -> None:
+            sent_texts.append(text)
+            raise WebSocketDisconnect()
+
+        ws.send_text = fake_send_text
+
+        bus = EventBus()
+
+        async def run() -> None:
+            # Start ws_endpoint concurrently, let it subscribe
+            task = asyncio.ensure_future(ws_endpoint(ws))
+            # Yield to let ws_endpoint reach bus.subscribe and queue.get
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            # Publish an event — wildcard subscriber receives the envelope
+            await bus.publish("task.queued", {"task_id": "t-1"})
+            await task
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": ""}):
+            with patch("praxis.api.get_event_bus", return_value=bus):
+                asyncio.run(run())
+
+        assert len(sent_texts) == 1
+        data = json.loads(sent_texts[0])
+        assert data["type"] == "task.queued"
+        assert data["data"]["task_id"] == "t-1"

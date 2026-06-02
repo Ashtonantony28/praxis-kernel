@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 try:
     from starlette.requests import Request
     from starlette.responses import JSONResponse, Response
+    from starlette.websockets import WebSocketDisconnect
     if TYPE_CHECKING:
         from starlette.websockets import WebSocket
 except ImportError as exc:  # pragma: no cover
@@ -22,6 +23,8 @@ except ImportError as exc:  # pragma: no cover
         "  Install with: pip install praxis[mcp]\n"
         f"  Missing: {exc}"
     ) from exc
+
+from .event_bus import get_event_bus
 
 # Package version — matches pyproject.toml
 _VERSION = "0.1.0"
@@ -1418,3 +1421,48 @@ async def put_heartbeat(request: Request) -> Response:
     hb_path.parent.mkdir(parents=True, exist_ok=True)
     hb_path.write_text(str(content), encoding="utf-8")
     return JSONResponse({"ok": True})
+
+
+async def ws_endpoint(websocket: "WebSocket") -> None:
+    """WS /ws — WebSocket endpoint for real-time event streaming.
+
+    Subscribes to EventBus ``'*'`` (wildcard) and streams all published events
+    to the connected WebSocket client as JSON envelopes::
+
+        {"type": "<event-name>", "data": <payload>}
+
+    On 25 s idle timeout, sends a keepalive ping::
+
+        {"type": "ping"}
+
+    Closes with code 4403 if the token check fails (auth rejected).
+    Unsubscribes from the EventBus when the client disconnects.
+    """
+    import asyncio
+    import json as _json
+
+    if not _check_token_ws(websocket):
+        await websocket.close(code=4403)
+        return
+
+    await websocket.accept()
+
+    bus = get_event_bus()
+    queue = bus.subscribe("*")
+
+    try:
+        while True:
+            try:
+                envelope = await asyncio.wait_for(queue.get(), timeout=25.0)
+            except asyncio.TimeoutError:
+                envelope = None
+
+            try:
+                if envelope is None:
+                    await websocket.send_text(_json.dumps({"type": "ping"}))
+                else:
+                    await websocket.send_text(_json.dumps(envelope))
+            except WebSocketDisconnect:
+                break
+    finally:
+        bus.unsubscribe("*", queue)

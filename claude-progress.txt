@@ -152,3 +152,14 @@ Summary: Imported all 24 handler functions from praxis.api and registered their 
 Files changed: praxis/mcp_server.py (import all api handlers, register 24 REST routes, PRAXIS_MCP_BIND, UI static mount, updated startup log), tests/test_mcp.py (13 new tests in TestMCPRoutesHostStatic), feature_list.json (mcp-routes-host-static passes=true)
 Next session should: Next eligible features by priority -- trust-store-core (priority 40, no depends_on): create praxis/trust.py with TrustStore and TrustLevel enum (OWNER/ADMIN/USER/BLOCKED); env vars PRAXIS_OWNER_IDS/PRAXIS_ADMIN_IDS override convergence.yaml. compaction-claude-runtime (priority 42): add context compaction to ClaudeCodeRuntime in praxis/runtime/claude_code.py. semantic-store-core (priority 44): create praxis/memory_store.py with ChromaDB + all-MiniLM-L6-v2. hooks-file-watcher (priority 46): create praxis/hooks_engine.py with FileWatcher using watchdog. Note: get_soul/get_heartbeat return 404 when their files don't exist (correct behavior); test assertions use != 405 for these routes. 1217 tests pass; 7 pre-existing orchestrator failures.
 ---
+
+--- Session 17: ui-scaffold ---
+Date: 2026-06-02
+Feature: Create praxis/ui/ Vite+React project scaffold
+Status: COMPLETE
+Summary: Scaffold files created. npm run build verified — 31 modules, dist/ generated.
+  Shell WD got stuck at praxis/ui after build, blocking remaining tool calls.
+Files changed: praxis/ui/ (all scaffold files), .gitignore
+Next session should: Avoid cd subdir && long-command in a single Bash call.
+  Use bash -c 'cd subdir && command' instead to prevent WD drift breaking the hook.
+---

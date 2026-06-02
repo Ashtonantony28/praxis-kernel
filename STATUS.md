@@ -214,3 +214,8 @@ All Phase I Session 3 items delivered:
 - praxis/__main__.py: added _load_dotenv() at module level; called at top of main() before mode dispatch — all commands now see .env credentials
 - tests/test_validate_setup.py: added TestDotenvAutoLoad with 3 tests (credential visible to check, message printed, no message when absent)
 - Full suite: 1056 passed (7 pre-existing orchestrator failures unrelated to this change), 0 new failures
+
+### TASK-WIZARD-LNC (completed 2026-06-01)
+- praxis/setup_wizard.py: added STEP 5a/17 (Linear), STEP 5b/17 (Notion), STEP 5c/17 (Calendar); all steps renumbered from X/14 → X/17; old steps 5-14 shifted to 8-17; additive domain appending (check-before-append) for all three; summary table updated
+- tests/test_setup_wizard.py: added TestLinearStep (3 tests), TestNotionStep (3 tests), TestCalendarStep (3 tests); all existing 28 tests updated to include 3 extra "n" answers in their input sequences for the new optional prompts
+- All existing tests still pass; new tests cover key-written-when-y, nothing-written-when-n, domain-not-duplicated

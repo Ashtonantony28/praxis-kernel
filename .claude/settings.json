@@ -11,6 +11,18 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/pre-compact.py"
+          }
+        ]
+      }
     ]
-  }
+  },
+  "compactPrompt": "When compacting, preserve: 1. The feature currently being implemented (ID and remaining steps). 2. All architectural decisions referenced this session — copy verbatim, do not paraphrase. 3. Relevant rules from CONSTRAINTS.md that were applied. 4. Approaches tried and rejected, with reasons. 5. Current file paths and function names relevant to ongoing work. 6. Unresolved error messages. Summarize tool outputs briefly — conclusions only. DO NOT summarize architectural decisions — copy them exactly."
 }

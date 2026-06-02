@@ -1,0 +1,83 @@
+[
+  {
+    "id": "phase-1-foundation",
+    "description": "Wizard fixes + EventBus — no UI deps, can run immediately",
+    "max_sessions": 20,
+    "categories": ["infra"],
+    "feature_ids": [
+      "wizard-linear-step",
+      "wizard-notion-step",
+      "wizard-calendar-step",
+      "wizard-domains-additive",
+      "event-bus-core",
+      "event-bus-queue-wiring",
+      "event-bus-scheduler-wiring",
+      "event-bus-ambient-wiring"
+    ],
+    "fan_out_groups": [
+      ["wizard-linear-step", "event-bus-core"]
+    ],
+    "note": "wizard-linear-step and event-bus-core touch completely different files — fan-out safe"
+  },
+  {
+    "id": "phase-2-api",
+    "description": "REST API + WebSocket layer — depends on EventBus",
+    "max_sessions": 30,
+    "categories": ["api"],
+    "feature_ids": [
+      "api-core-auth",
+      "api-status-queue-list",
+      "api-queue-mutations",
+      "api-approvals",
+      "api-schedule",
+      "api-wiki-memory-integrations",
+      "mcp-websocket-endpoint",
+      "mcp-routes-host-static"
+    ],
+    "fan_out_groups": [],
+    "note": "Sequential within phase — each endpoint builds on auth foundation"
+  },
+  {
+    "id": "phase-3-ui",
+    "description": "React SPA — depends on API being live",
+    "max_sessions": 60,
+    "categories": ["ui"],
+    "feature_ids": [
+      "ui-scaffold",
+      "ui-design-system",
+      "ui-api-ws-foundation",
+      "ui-layout-router",
+      "ui-chat-screen",
+      "ui-approvals-screen",
+      "ui-task-board-screen",
+      "ui-wiki-screen",
+      "ui-schedule-screen",
+      "ui-settings-screen",
+      "ui-build-integration"
+    ],
+    "fan_out_groups": [],
+    "note": "Sequential — each screen depends on scaffold and router"
+  },
+  {
+    "id": "phase-4-extensions",
+    "description": "Independent extensions — fan-out all 5 groups in parallel",
+    "max_sessions": 60,
+    "categories": ["infra"],
+    "feature_ids": [
+      "trust-store-core",
+      "trust-channel-wiring",
+      "compaction-claude-runtime",
+      "compaction-openai-runtime",
+      "semantic-store-core",
+      "semantic-wiring",
+      "hooks-file-watcher",
+      "hooks-webhook-wiring",
+      "voice-transcriber",
+      "voice-telegram-wiring"
+    ],
+    "fan_out_groups": [
+      ["trust-store-core", "compaction-claude-runtime", "semantic-store-core", "hooks-file-watcher", "voice-transcriber"]
+    ],
+    "note": "First session of each group is independent — fan-out 3 at a time (Max 5x cap)"
+  }
+]
