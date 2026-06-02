@@ -20,6 +20,20 @@ RATE_LIMIT_MAX_DELAY = 60   # seconds
 MAX_CONTEXT_MESSAGES = 40   # trigger compaction above this
 CONTEXT_KEEP_RECENT = 10    # keep last N messages verbatim
 
+# Token-based compaction: per-model context windows
+_MODEL_CONTEXT_LIMITS: dict[str, int] = {
+    "claude-3-opus-20240229": 200_000,
+    "claude-3-5-sonnet-20241022": 200_000,
+    "claude-3-5-haiku-20241022": 200_000,
+    "claude-opus-4-5": 200_000,
+    "claude-sonnet-4-5": 200_000,
+    "claude-haiku-4-5": 200_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-haiku-4-6": 200_000,
+    "claude-opus-4-6": 200_000,
+}
+_DEFAULT_CONTEXT_LIMIT: int = 128_000
+
 
 class ClaudeCodeRuntime(Runtime):
     """Runtime backed by the Anthropic Messages API.
@@ -33,6 +47,7 @@ class ClaudeCodeRuntime(Runtime):
         self.auth_method = auth_method
         self._cost_breaker = CostCircuitBreaker.from_env()
         self._current_mode: "Mode | None" = None
+        self._session_tokens: int = 0
 
     @classmethod
     def from_env(cls) -> "ClaudeCodeRuntime":
@@ -119,15 +134,15 @@ class ClaudeCodeRuntime(Runtime):
             usage = getattr(response, "usage", None)
             if usage is not None:
                 try:
-                    self._cost_breaker.record_call(
-                        model,
-                        int(getattr(usage, "input_tokens", 0) or 0),
-                        int(getattr(usage, "output_tokens", 0) or 0),
-                    )
+                    in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+                    out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+                    self._cost_breaker.record_call(model, in_tok, out_tok)
+                    self._session_tokens += in_tok + out_tok
                 except (TypeError, ValueError):
                     pass
 
             messages = self.manage_context(messages, "assistant", response.content)
+            messages = self._maybe_compact(messages, system=effective_system, model=model)
 
             if response.stop_reason == "end_turn":
                 return self._extract_text(response)
@@ -259,6 +274,75 @@ class ClaudeCodeRuntime(Runtime):
         if isinstance(original, str):
             first["content"] = f"{original}\n\n{summary_text}"
         return [first] + recent
+
+    def _maybe_compact(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        system: str,
+        model: str,
+    ) -> list[dict[str, Any]]:
+        """Token-based compaction: if accumulated tokens >= threshold, call LLM for a summary.
+
+        Reads PRAXIS_COMPACTION_THRESHOLD (default 0.8) and PRAXIS_COMPACTION_RESERVE
+        (default 2048 — max_tokens for the summary call).
+        On success: rebuilds history as [summary_msg, ack_msg] + last 8 pairs,
+        resets _session_tokens to 0, emits COMPACTION_FIRED event.
+        On failure: returns messages unchanged (compaction is best-effort).
+        """
+        threshold = float(os.environ.get("PRAXIS_COMPACTION_THRESHOLD", "0.8"))
+        max_ctx = _MODEL_CONTEXT_LIMITS.get(model, _DEFAULT_CONTEXT_LIMIT)
+
+        if self._session_tokens < max_ctx * threshold:
+            return messages  # below threshold — nothing to do
+
+        compaction_prompt = (
+            "Please summarize the conversation so far concisely but completely, "
+            "capturing all important context, decisions, results, and current state. "
+            "Focus on facts and outcomes. "
+            "This summary will replace the older messages in the context window."
+        )
+        compact_input = messages + [{"role": "user", "content": compaction_prompt}]
+        reserve = int(os.environ.get("PRAXIS_COMPACTION_RESERVE", "2048"))
+
+        try:
+            resp = self.client.messages.create(
+                model=model,
+                system=system,
+                messages=compact_input,
+                max_tokens=reserve,
+            )
+            summary_text = self._extract_text(resp)
+        except Exception:
+            return messages  # compaction failed — return unchanged
+
+        # Keep last 8 pairs (16 messages), aligned to a user-message boundary
+        keep = min(16, len(messages))
+        recent = messages[-keep:]
+        while recent and recent[0].get("role") != "user":
+            recent = recent[1:]
+
+        new_messages: list[dict[str, Any]] = [
+            {"role": "user", "content": f"[Compacted context]\n{summary_text}"},
+            {"role": "assistant", "content": "Understood. Context has been summarized."},
+        ] + recent
+
+        self._session_tokens = 0
+
+        try:
+            from praxis.event_bus import get_event_bus, COMPACTION_FIRED
+            get_event_bus().publish_sync(
+                COMPACTION_FIRED,
+                {
+                    "model": model,
+                    "messages_before": len(messages),
+                    "messages_after": len(new_messages),
+                },
+            )
+        except Exception:
+            pass
+
+        return new_messages
 
     @staticmethod
     def _summarize_message(msg: dict[str, Any]) -> str | None:
