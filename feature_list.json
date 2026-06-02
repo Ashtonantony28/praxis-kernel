@@ -275,7 +275,7 @@
     "depends_on": [
       "ui-scaffold"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "ui-api-ws-foundation",

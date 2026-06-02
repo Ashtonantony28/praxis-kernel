@@ -163,3 +163,12 @@ Files changed: praxis/ui/ (all scaffold files), .gitignore
 Next session should: Avoid cd subdir && long-command in a single Bash call.
   Use bash -c 'cd subdir && command' instead to prevent WD drift breaking the hook.
 ---
+
+--- Session 18: ui-design-system ---
+Date: 2026-06-02
+Feature: Global CSS design tokens: dark theme, color palette, typography, layout primitives
+Status: COMPLETE
+Summary: praxis/ui/src/styles/globals.css already existed from a prior session with all required design tokens (--bg, --surface, --surface2, --border, --text1, --text2, --cyan, --green, --orange, --red), .chip/.chip-pending/running/done/failed variants, .status-dot variants, and @keyframes pulse/blink. index.css imports globals.css via @import and applies Tailwind directives. npm run build produces dist/ with all tokens in compiled CSS. 1217 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: feature_list.json (ui-design-system passes=true)
+Next session should: Next eligible feature is ui-api-ws-foundation (priority 22) — depends on ui-design-system (now passes=true). Create src/api/client.ts with get/post/del fetch wrapper + ApiError, and src/store/ws.ts Zustand store with connected/pendingApprovals/runningTasks. trust-store-core (priority 40), compaction-claude-runtime (priority 42), semantic-store-core (priority 44), hooks-file-watcher (priority 46), voice-transcriber (priority 48) are also eligible (no deps). Note: globals.css is imported by index.css, not main.tsx directly; tailwind directives follow the import.
+---
