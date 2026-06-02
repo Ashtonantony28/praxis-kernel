@@ -1451,3 +1451,517 @@ class TestScheduleRunNow:
             response = asyncio.run(post_schedule_run_now(req))
 
         assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Wiki helpers
+# ---------------------------------------------------------------------------
+
+def _make_wiki_request(query_params: dict | None = None, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request for wiki GET endpoints."""
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.query_params = query_params or {}
+    req.path_params = {}
+    return req
+
+
+def _make_wiki_path_request(path_params: dict, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request with path_params for wiki detail endpoint."""
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.path_params = path_params
+    req.query_params = {}
+    return req
+
+
+def _make_body_request(body: dict, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request with an async body() method returning JSON."""
+    import asyncio
+    import json
+
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.query_params = {}
+    req.path_params = {}
+
+    async def _body():
+        return json.dumps(body).encode("utf-8")
+
+    req.body = _body
+    return req
+
+
+# ---------------------------------------------------------------------------
+# GET /api/wiki/search — TestWikiSearch
+# ---------------------------------------------------------------------------
+
+class TestWikiSearch:
+    def test_wiki_search_matches_slug(self, tmp_path):
+        """get_wiki_search() returns results when query matches wiki page slug.
+
+        This is the required test_wiki_search_matches_slug from the feature spec.
+        """
+        import asyncio
+        import json
+        from praxis.api import get_wiki_search
+
+        pages_dir = tmp_path / "wiki" / "pages"
+        pages_dir.mkdir(parents=True)
+        (pages_dir / "aiden-antony.md").write_text(
+            "---\nentity: Aiden Antony\n---\n\nSoftware engineer.", encoding="utf-8"
+        )
+        (pages_dir / "praxis-kernel.md").write_text(
+            "---\nentity: Praxis Kernel\n---\n\nAgentic OS.", encoding="utf-8"
+        )
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request(query_params={"q": "aiden"})
+            response = asyncio.run(get_wiki_search(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "results" in body
+        slugs = [r["slug"] for r in body["results"]]
+        assert "aiden-antony" in slugs
+
+    def test_wiki_search_empty_query(self, tmp_path):
+        """get_wiki_search() returns empty results for blank query."""
+        import asyncio
+        import json
+        from praxis.api import get_wiki_search
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request(query_params={"q": ""})
+            response = asyncio.run(get_wiki_search(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["results"] == []
+
+    def test_wiki_search_no_match(self, tmp_path):
+        """get_wiki_search() returns empty results when query matches nothing."""
+        import asyncio
+        import json
+        from praxis.api import get_wiki_search
+
+        pages_dir = tmp_path / "wiki" / "pages"
+        pages_dir.mkdir(parents=True)
+        (pages_dir / "foo.md").write_text("---\nentity: Foo\n---\n\nContent.", encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request(query_params={"q": "zzznomatch"})
+            response = asyncio.run(get_wiki_search(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["results"] == []
+
+    def test_wiki_search_sorted_by_score(self, tmp_path):
+        """get_wiki_search() returns results sorted descending by score."""
+        import asyncio
+        import json
+        from praxis.api import get_wiki_search
+
+        pages_dir = tmp_path / "wiki" / "pages"
+        pages_dir.mkdir(parents=True)
+        (pages_dir / "one-mention.md").write_text("praxis is great.", encoding="utf-8")
+        (pages_dir / "many-mentions.md").write_text(
+            "praxis praxis praxis praxis praxis.", encoding="utf-8"
+        )
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request(query_params={"q": "praxis"})
+            response = asyncio.run(get_wiki_search(req))
+
+        body = json.loads(response.body)
+        results = body["results"]
+        assert len(results) == 2
+        assert results[0]["score"] >= results[1]["score"]
+        assert results[0]["slug"] == "many-mentions"
+
+    def test_wiki_search_401_with_bad_token(self, tmp_path):
+        """get_wiki_search() returns 401 when token is wrong."""
+        import asyncio
+        from praxis.api import get_wiki_search
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "secret", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request(auth_header="Bearer wrong")
+            response = asyncio.run(get_wiki_search(req))
+
+        assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /api/wiki/pages and /api/wiki/pages/{slug} — TestWikiPages
+# ---------------------------------------------------------------------------
+
+class TestWikiPages:
+    def _write_page(self, pages_dir, slug: str, entity: str, body: str) -> None:
+        content = f'---\nentity: "{entity}"\nvalid_from: "2026-01-01"\n---\n\n{body}'
+        (pages_dir / f"{slug}.md").write_text(content, encoding="utf-8")
+
+    def test_wiki_pages_list_empty(self, tmp_path):
+        """get_wiki_pages() returns empty list when no pages exist."""
+        import asyncio
+        import json
+        from praxis.api import get_wiki_pages
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_wiki_pages(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "pages" in body
+        assert body["pages"] == []
+
+    def test_wiki_pages_list_with_pages(self, tmp_path):
+        """get_wiki_pages() returns list of pages with frontmatter."""
+        import asyncio
+        import json
+        from praxis.api import get_wiki_pages
+
+        pages_dir = tmp_path / "wiki" / "pages"
+        pages_dir.mkdir(parents=True)
+        self._write_page(pages_dir, "alice", "Alice", "Alice is a developer.")
+        self._write_page(pages_dir, "bob", "Bob", "Bob is a designer.")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_wiki_pages(req))
+
+        body = json.loads(response.body)
+        slugs = [p["slug"] for p in body["pages"]]
+        assert "alice" in slugs
+        assert "bob" in slugs
+        alice = next(p for p in body["pages"] if p["slug"] == "alice")
+        assert alice["frontmatter"]["entity"] == "Alice"
+
+    def test_wiki_page_detail_404(self, tmp_path):
+        """get_wiki_page_detail() returns 404 for unknown slug.
+
+        This is the required test_wiki_page_detail_404 from the feature spec.
+        """
+        import asyncio
+        import json
+        from praxis.api import get_wiki_page_detail
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_path_request(path_params={"slug": "does-not-exist"})
+            response = asyncio.run(get_wiki_page_detail(req))
+
+        assert response.status_code == 404
+        body = json.loads(response.body)
+        assert "error" in body
+
+    def test_wiki_page_detail_returns_content(self, tmp_path):
+        """get_wiki_page_detail() returns full content and frontmatter."""
+        import asyncio
+        import json
+        from praxis.api import get_wiki_page_detail
+
+        pages_dir = tmp_path / "wiki" / "pages"
+        pages_dir.mkdir(parents=True)
+        self._write_page(pages_dir, "charlie", "Charlie", "Charlie builds things.")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_path_request(path_params={"slug": "charlie"})
+            response = asyncio.run(get_wiki_page_detail(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["slug"] == "charlie"
+        assert "Charlie builds things." in body["content"]
+        assert body["frontmatter"]["entity"] == "Charlie"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/memory — TestGetMemory
+# ---------------------------------------------------------------------------
+
+class TestGetMemory:
+    def test_memory_returns_entries(self, tmp_path):
+        """get_memory() returns entries from conversation jsonl files."""
+        import asyncio
+        import json
+        from praxis.api import get_memory
+
+        conv_dir = tmp_path / ".praxis" / "memory" / "conversations"
+        conv_dir.mkdir(parents=True)
+        entries = [
+            {"ts": f"2026-06-0{i}T00:00:00Z", "prompt": f"task {i}", "outcome": "success"}
+            for i in range(1, 4)
+        ]
+        (conv_dir / "2026-06-01.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in entries), encoding="utf-8"
+        )
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_memory(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "entries" in body
+        assert len(body["entries"]) == 3
+
+    def test_memory_no_directory(self, tmp_path):
+        """get_memory() returns empty list when conversations dir does not exist."""
+        import asyncio
+        import json
+        from praxis.api import get_memory
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_memory(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["entries"] == []
+
+    def test_memory_capped_at_10(self, tmp_path):
+        """get_memory() returns at most 10 entries."""
+        import asyncio
+        import json
+        from praxis.api import get_memory
+
+        conv_dir = tmp_path / ".praxis" / "memory" / "conversations"
+        conv_dir.mkdir(parents=True)
+        entries = [
+            {"ts": f"2026-06-02T00:00:{i:02d}Z", "prompt": f"p{i}", "outcome": "success"}
+            for i in range(20)
+        ]
+        (conv_dir / "2026-06-02.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in entries), encoding="utf-8"
+        )
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_memory(req))
+
+        body = json.loads(response.body)
+        assert len(body["entries"]) == 10
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /api/integrations — TestIntegrations
+# ---------------------------------------------------------------------------
+
+class TestIntegrations:
+    def test_integrations_uses_cache(self, tmp_path):
+        """get_integrations() returns cached result on second call without re-running.
+
+        This is the required test_integrations_uses_cache from the feature spec.
+        """
+        import asyncio
+        import json
+        import praxis.api as api_module
+        from praxis.api import get_integrations
+
+        # Prime the cache manually to avoid network calls.
+        api_module._integrations_cache = {
+            "data": [{"name": "Email", "status": "skip", "message": "not configured"}]
+        }
+        api_module._integrations_cache_ts = api_module._time.monotonic()
+
+        call_count = {"n": 0}
+        orig = api_module._run_validation
+
+        def mock_validate(root):
+            call_count["n"] += 1
+            return orig(root)
+
+        api_module._run_validation = mock_validate
+        try:
+            with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+                req = _make_wiki_request()
+                response = asyncio.run(get_integrations(req))
+        finally:
+            api_module._run_validation = orig
+            # Reset cache to avoid polluting other tests.
+            api_module._integrations_cache = {}
+            api_module._integrations_cache_ts = 0.0
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "integrations" in body
+        # _run_validation should NOT have been called because cache was warm.
+        assert call_count["n"] == 0
+
+    def test_integrations_returns_list(self, tmp_path):
+        """get_integrations() returns a list of integration status objects."""
+        import asyncio
+        import json
+        import praxis.api as api_module
+        from praxis.api import get_integrations
+
+        # Ensure cache is cold.
+        api_module._integrations_cache = {}
+        api_module._integrations_cache_ts = 0.0
+
+        mock_data = [
+            {"name": "Email", "status": "skip", "message": "not configured"},
+            {"name": "Slack", "status": "skip", "message": "not configured"},
+        ]
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            with patch("praxis.api._run_validation", return_value=mock_data):
+                req = _make_wiki_request()
+                response = asyncio.run(get_integrations(req))
+
+        # Reset cache.
+        api_module._integrations_cache = {}
+        api_module._integrations_cache_ts = 0.0
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "integrations" in body
+        assert len(body["integrations"]) == 2
+
+    def test_post_integrations_validate_force_fresh(self, tmp_path):
+        """post_integrations_validate() ignores cache and re-runs validation."""
+        import asyncio
+        import json
+        import praxis.api as api_module
+        from praxis.api import post_integrations_validate
+
+        # Prime a warm cache.
+        api_module._integrations_cache = {
+            "data": [{"name": "Email", "status": "pass", "message": "ok"}]
+        }
+        api_module._integrations_cache_ts = api_module._time.monotonic()
+
+        fresh_data = [{"name": "Email", "status": "fail", "message": "down"}]
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            with patch("praxis.api._run_validation", return_value=fresh_data):
+                req = _make_wiki_request()
+                response = asyncio.run(post_integrations_validate(req))
+
+        api_module._integrations_cache = {}
+        api_module._integrations_cache_ts = 0.0
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["integrations"][0]["status"] == "fail"
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /api/soul and /api/heartbeat — TestSoulHeartbeat
+# ---------------------------------------------------------------------------
+
+class TestSoulHeartbeat:
+    def test_get_soul_404_when_missing(self, tmp_path):
+        """get_soul() returns 404 when SOUL.md does not exist."""
+        import asyncio
+        from praxis.api import get_soul
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_soul(req))
+
+        assert response.status_code == 404
+
+    def test_get_soul_returns_content(self, tmp_path):
+        """get_soul() returns content of .praxis/SOUL.md."""
+        import asyncio
+        import json
+        from praxis.api import get_soul
+
+        praxis_dir = tmp_path / ".praxis"
+        praxis_dir.mkdir(parents=True)
+        (praxis_dir / "SOUL.md").write_text("# Soul\nI am Praxis.", encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_soul(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "I am Praxis." in body["content"]
+
+    def test_put_soul_writes_file(self, tmp_path):
+        """put_soul() writes content to .praxis/SOUL.md."""
+        import asyncio
+        import json
+        from praxis.api import put_soul
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_body_request({"content": "# New Soul\nPraxis is calm."})
+            response = asyncio.run(put_soul(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["ok"] is True
+        soul_path = tmp_path / ".praxis" / "SOUL.md"
+        assert soul_path.exists()
+        assert "Praxis is calm." in soul_path.read_text(encoding="utf-8")
+
+    def test_put_soul_missing_content_field(self, tmp_path):
+        """put_soul() returns 400 when 'content' field is missing."""
+        import asyncio
+        from praxis.api import put_soul
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_body_request({"not_content": "something"})
+            response = asyncio.run(put_soul(req))
+
+        assert response.status_code == 400
+
+    def test_get_heartbeat_404_when_missing(self, tmp_path):
+        """get_heartbeat() returns 404 when HEARTBEAT.md does not exist."""
+        import asyncio
+        from praxis.api import get_heartbeat
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_heartbeat(req))
+
+        assert response.status_code == 404
+
+    def test_get_heartbeat_returns_content(self, tmp_path):
+        """get_heartbeat() returns content of .praxis/HEARTBEAT.md."""
+        import asyncio
+        import json
+        from praxis.api import get_heartbeat
+
+        praxis_dir = tmp_path / ".praxis"
+        praxis_dir.mkdir(parents=True)
+        (praxis_dir / "HEARTBEAT.md").write_text("# Heartbeat\nCheck email daily.", encoding="utf-8")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_wiki_request()
+            response = asyncio.run(get_heartbeat(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "Check email daily." in body["content"]
+
+    def test_put_heartbeat_writes_file(self, tmp_path):
+        """put_heartbeat() writes content to .praxis/HEARTBEAT.md."""
+        import asyncio
+        import json
+        from praxis.api import put_heartbeat
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_body_request({"content": "# Heartbeat\nRun at 8am."})
+            response = asyncio.run(put_heartbeat(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["ok"] is True
+        hb_path = tmp_path / ".praxis" / "HEARTBEAT.md"
+        assert hb_path.exists()
+        assert "Run at 8am." in hb_path.read_text(encoding="utf-8")
+
+    def test_put_heartbeat_missing_content_field(self, tmp_path):
+        """put_heartbeat() returns 400 when 'content' field is missing."""
+        import asyncio
+        from praxis.api import put_heartbeat
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_body_request({"wrong": "data"})
+            response = asyncio.run(put_heartbeat(req))
+
+        assert response.status_code == 400

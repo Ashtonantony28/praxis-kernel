@@ -1030,3 +1030,391 @@ async def post_schedule_run_now(request: Request) -> Response:
         pass
 
     return JSONResponse({"task_id": queued.id}, status_code=201)
+
+
+# ---------------------------------------------------------------------------
+# Wiki helpers
+# ---------------------------------------------------------------------------
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Parse YAML-ish frontmatter from a wiki page.
+
+    Returns (frontmatter_dict, body_text).  If no frontmatter block is found,
+    returns ({}, text).  We deliberately use stdlib only (no PyYAML) — the
+    frontmatter in wiki pages is simple key: value pairs (no nesting).
+    """
+    if not text.startswith("---"):
+        return {}, text
+    end = text.find("\n---", 3)
+    if end == -1:
+        return {}, text
+    raw_fm = text[3:end].strip()
+    body = text[end + 4:].lstrip("\n")
+    fm: dict = {}
+    for line in raw_fm.splitlines():
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if val.lower() == "null":
+            fm[key] = None
+        elif val.startswith("[") and val.endswith("]"):
+            inner = val[1:-1].strip()
+            fm[key] = [v.strip().strip('"').strip("'") for v in inner.split(",")] if inner else []
+        else:
+            fm[key] = val
+    return fm, body
+
+
+def _wiki_pages_dir(root: Path) -> Path:
+    return root / "wiki" / "pages"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/wiki/search — keyword search
+# ---------------------------------------------------------------------------
+
+async def get_wiki_search(request: Request) -> Response:
+    """GET /api/wiki/search?q= — keyword search over wiki pages.
+
+    Returns::
+
+        {"results": [{"slug": "...", "score": N, "content_preview": "..."}]}
+
+    ``score`` is a simple integer count of how many times the query string
+    appears in the filename + content (case-insensitive).  Results are
+    sorted descending by score; zero-score results are excluded.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    q = request.query_params.get("q", "").strip().lower()
+    if not q:
+        return JSONResponse({"results": []})
+
+    pages_dir = _wiki_pages_dir(_workspace_root())
+    results = []
+    if pages_dir.is_dir():
+        for md_file in sorted(pages_dir.glob("*.md")):
+            slug = md_file.stem
+            try:
+                content = md_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            haystack = (slug + " " + content).lower()
+            score = haystack.count(q)
+            if score == 0:
+                continue
+            # Build a short preview: first 200 chars of body after frontmatter.
+            _, body = _parse_frontmatter(content)
+            preview = body.strip()[:200]
+            results.append({"slug": slug, "score": score, "content_preview": preview})
+
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return JSONResponse({"results": results})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/wiki/pages and /api/wiki/pages/{slug}
+# ---------------------------------------------------------------------------
+
+async def get_wiki_pages(request: Request) -> Response:
+    """GET /api/wiki/pages — list all wiki pages with frontmatter.
+
+    Returns::
+
+        {"pages": [{"slug": "...", "frontmatter": {...}}]}
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    pages_dir = _wiki_pages_dir(_workspace_root())
+    pages = []
+    if pages_dir.is_dir():
+        for md_file in sorted(pages_dir.glob("*.md")):
+            slug = md_file.stem
+            try:
+                content = md_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm, _ = _parse_frontmatter(content)
+            pages.append({"slug": slug, "frontmatter": fm})
+
+    return JSONResponse({"pages": pages})
+
+
+async def get_wiki_page_detail(request: Request) -> Response:
+    """GET /api/wiki/pages/{slug} — detail of a single wiki page.
+
+    Returns::
+
+        {"slug": "...", "frontmatter": {...}, "content": "...full body..."}
+
+    Returns 404 if not found.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    slug = request.path_params.get("slug", "")
+    pages_dir = _wiki_pages_dir(_workspace_root())
+    md_file = pages_dir / f"{slug}.md"
+    if not md_file.exists():
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Wiki page '{slug}' not found"},
+            status_code=404,
+        )
+
+    try:
+        content = md_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        return JSONResponse({"error": "Read error", "detail": str(exc)}, status_code=500)
+
+    fm, body = _parse_frontmatter(content)
+    return JSONResponse({"slug": slug, "frontmatter": fm, "content": body})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/memory — last 10 conversation entries
+# ---------------------------------------------------------------------------
+
+async def get_memory(request: Request) -> Response:
+    """GET /api/memory — last 10 entries from conversation memory.
+
+    Scans .praxis/memory/conversations/*.jsonl files (sorted by filename
+    descending so newest date first) and returns up to 10 entries.
+
+    Returns::
+
+        {"entries": [{...jsonl entry...}]}
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    import json as _json
+
+    root = _workspace_root()
+    conv_dir = root / ".praxis" / "memory" / "conversations"
+    entries: list[dict] = []
+
+    if conv_dir.is_dir():
+        # Sort by filename descending (dates like 2026-06-02.jsonl) — newest first.
+        jsonl_files = sorted(conv_dir.glob("*.jsonl"), key=lambda p: p.name, reverse=True)
+        for jf in jsonl_files:
+            if len(entries) >= 10:
+                break
+            try:
+                lines = jf.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            # Reverse within file so most-recent entries come first.
+            for line in reversed(lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+                if len(entries) >= 10:
+                    break
+
+    return JSONResponse({"entries": entries})
+
+
+# ---------------------------------------------------------------------------
+# Integration validation cache
+# ---------------------------------------------------------------------------
+
+import time as _time
+
+_integrations_cache: dict = {}
+_integrations_cache_ts: float = 0.0
+_INTEGRATIONS_CACHE_TTL = 300.0  # seconds
+
+
+def _run_validation(root: Path) -> list[dict]:
+    """Run validate_setup checks and return [{name, status, message}]."""
+    try:
+        import sys as _sys
+        _scripts_dir = str(root / "scripts")
+        if _scripts_dir not in _sys.path:
+            _sys.path.insert(0, _scripts_dir)
+        from validate_setup import run_validation  # type: ignore[import]
+        results = run_validation(workspace_root=root)
+        return [
+            {"name": name, "status": status, "message": detail}
+            for name, (status, detail) in results.items()
+        ]
+    except Exception as exc:
+        return [{"name": "error", "status": "fail", "message": str(exc)}]
+
+
+async def get_integrations(request: Request) -> Response:
+    """GET /api/integrations — cached integration status (TTL=300s).
+
+    Returns::
+
+        {"integrations": [{"name": "...", "status": "pass|fail|skip", "message": "..."}]}
+    """
+    global _integrations_cache, _integrations_cache_ts
+
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    now = _time.monotonic()
+    if _integrations_cache and (now - _integrations_cache_ts) < _INTEGRATIONS_CACHE_TTL:
+        return JSONResponse({"integrations": _integrations_cache["data"]})
+
+    root = _workspace_root()
+    data = _run_validation(root)
+    _integrations_cache = {"data": data}
+    _integrations_cache_ts = now
+    return JSONResponse({"integrations": data})
+
+
+async def post_integrations_validate(request: Request) -> Response:
+    """POST /api/integrations/validate — force-fresh integration status check.
+
+    Bypasses and resets the cache.
+
+    Returns::
+
+        {"integrations": [{"name": "...", "status": "pass|fail|skip", "message": "..."}]}
+    """
+    global _integrations_cache, _integrations_cache_ts
+
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    root = _workspace_root()
+    data = _run_validation(root)
+    _integrations_cache = {"data": data}
+    _integrations_cache_ts = _time.monotonic()
+    return JSONResponse({"integrations": data})
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /api/soul and /api/heartbeat
+# ---------------------------------------------------------------------------
+
+def _praxis_dir(root: Path) -> Path:
+    return root / ".praxis"
+
+
+async def get_soul(request: Request) -> Response:
+    """GET /api/soul — read .praxis/SOUL.md.
+
+    Returns::
+
+        {"content": "...markdown text..."}
+
+    Returns 404 if the file does not exist yet.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    soul_path = _praxis_dir(_workspace_root()) / "SOUL.md"
+    if not soul_path.exists():
+        return JSONResponse(
+            {"error": "Not Found", "detail": "SOUL.md has not been created yet"},
+            status_code=404,
+        )
+    content = soul_path.read_text(encoding="utf-8")
+    return JSONResponse({"content": content})
+
+
+async def put_soul(request: Request) -> Response:
+    """PUT /api/soul — write .praxis/SOUL.md.
+
+    Request body::
+
+        {"content": "...markdown text..."}
+
+    Returns::
+
+        {"ok": true}
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    import json as _json
+
+    try:
+        body = await request.body()
+        data = _json.loads(body)
+    except Exception:
+        return JSONResponse({"error": "Bad Request", "detail": "Invalid JSON body"}, status_code=400)
+
+    content = data.get("content")
+    if content is None:
+        return JSONResponse({"error": "Bad Request", "detail": "Missing 'content' field"}, status_code=400)
+
+    soul_path = _praxis_dir(_workspace_root()) / "SOUL.md"
+    soul_path.parent.mkdir(parents=True, exist_ok=True)
+    soul_path.write_text(str(content), encoding="utf-8")
+    return JSONResponse({"ok": True})
+
+
+async def get_heartbeat(request: Request) -> Response:
+    """GET /api/heartbeat — read .praxis/HEARTBEAT.md.
+
+    Returns::
+
+        {"content": "...markdown text..."}
+
+    Returns 404 if the file does not exist yet.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    hb_path = _praxis_dir(_workspace_root()) / "HEARTBEAT.md"
+    if not hb_path.exists():
+        return JSONResponse(
+            {"error": "Not Found", "detail": "HEARTBEAT.md has not been created yet"},
+            status_code=404,
+        )
+    content = hb_path.read_text(encoding="utf-8")
+    return JSONResponse({"content": content})
+
+
+async def put_heartbeat(request: Request) -> Response:
+    """PUT /api/heartbeat — write .praxis/HEARTBEAT.md.
+
+    Request body::
+
+        {"content": "...markdown text..."}
+
+    Returns::
+
+        {"ok": true}
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    import json as _json
+
+    try:
+        body = await request.body()
+        data = _json.loads(body)
+    except Exception:
+        return JSONResponse({"error": "Bad Request", "detail": "Invalid JSON body"}, status_code=400)
+
+    content = data.get("content")
+    if content is None:
+        return JSONResponse({"error": "Bad Request", "detail": "Missing 'content' field"}, status_code=400)
+
+    hb_path = _praxis_dir(_workspace_root()) / "HEARTBEAT.md"
+    hb_path.parent.mkdir(parents=True, exist_ok=True)
+    hb_path.write_text(str(content), encoding="utf-8")
+    return JSONResponse({"ok": True})

@@ -210,7 +210,7 @@
     "depends_on": [
       "api-schedule"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "mcp-websocket-endpoint",
