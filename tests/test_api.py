@@ -151,3 +151,169 @@ class TestCheckTokenWs:
             ws = _make_websocket(token_param="secret123", auth_header="Bearer bad")
             result = _check_token_ws(ws)
         assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Helpers for route handler tests
+# ---------------------------------------------------------------------------
+
+def _make_http_request(query_params: dict | None = None, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request for handler tests."""
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.query_params = query_params or {}
+    return req
+
+
+# ---------------------------------------------------------------------------
+# GET /api/status
+# ---------------------------------------------------------------------------
+
+class TestGetStatus:
+    def test_status_returns_json(self, tmp_path):
+        """get_status() returns a JSONResponse with version, queue_stats, daemon_running."""
+        import asyncio
+        import json
+        from praxis.api import get_status
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_http_request()
+            response = asyncio.run(get_status(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert "version" in body
+        assert "queue_stats" in body
+        assert "daemon_running" in body
+        assert isinstance(body["queue_stats"], dict)
+        assert isinstance(body["daemon_running"], bool)
+
+    def test_status_401_with_bad_token(self, tmp_path):
+        """get_status() returns 401 when token is wrong."""
+        import asyncio
+        from praxis.api import get_status
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "secret", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_http_request(auth_header="Bearer wrong")
+            response = asyncio.run(get_status(req))
+
+        assert response.status_code == 401
+
+    def test_status_daemon_running_false_when_no_pid_file(self, tmp_path):
+        """daemon_running is False when .praxis/praxis.pid does not exist."""
+        import asyncio
+        import json
+        from praxis.api import get_status
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_http_request()
+            response = asyncio.run(get_status(req))
+
+        body = json.loads(response.body)
+        assert body["daemon_running"] is False
+
+
+# ---------------------------------------------------------------------------
+# GET /api/queue
+# ---------------------------------------------------------------------------
+
+class TestGetQueue:
+    def test_queue_list_empty(self, tmp_path):
+        """get_queue() returns empty task list when no tasks.jsonl exists."""
+        import asyncio
+        import json
+        from praxis.api import get_queue
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_http_request()
+            response = asyncio.run(get_queue(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["tasks"] == []
+        assert body["total"] == 0
+
+    def test_queue_list_with_tasks(self, tmp_path):
+        """get_queue() returns tasks with correct shape when tasks exist."""
+        import asyncio
+        import json
+        from praxis.queue import Task, TaskQueue
+        from praxis.api import get_queue
+
+        # Populate queue with two tasks.
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        task1 = Task.create(prompt="do something useful here", priority=1)
+        task2 = Task.create(prompt="another task with a longer prompt " * 5, priority=0)
+        tq.append(task1)
+        tq.append(task2)
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_http_request()
+            response = asyncio.run(get_queue(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["total"] == 2
+        assert len(body["tasks"]) == 2
+        for t in body["tasks"]:
+            assert "id" in t
+            assert "prompt_preview" in t
+            assert "status" in t
+            assert "priority" in t
+            assert "queued_at" in t
+            assert len(t["prompt_preview"]) <= 100
+
+    def test_queue_list_status_filter(self, tmp_path):
+        """get_queue() filters tasks by ?status= parameter."""
+        import asyncio
+        import json
+        from praxis.queue import Task, TaskQueue
+        from praxis.api import get_queue
+
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        task1 = Task.create(prompt="pending task", priority=0)
+        task2 = Task.create(prompt="done task", priority=0)
+        tq.append(task1)
+        tq.append(task2)
+        tq.update_status(task2.id, "done")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_http_request(query_params={"status": "pending"})
+            response = asyncio.run(get_queue(req))
+
+        body = json.loads(response.body)
+        assert body["total"] == 1
+        assert body["tasks"][0]["status"] == "pending"
+
+    def test_queue_list_pagination(self, tmp_path):
+        """get_queue() respects limit and offset parameters."""
+        import asyncio
+        import json
+        from praxis.queue import Task, TaskQueue
+        from praxis.api import get_queue
+
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        for i in range(5):
+            tq.append(Task.create(prompt=f"task {i}", priority=0))
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_http_request(query_params={"limit": "2", "offset": "1"})
+            response = asyncio.run(get_queue(req))
+
+        body = json.loads(response.body)
+        assert body["total"] == 5
+        assert len(body["tasks"]) == 2
+
+    def test_queue_list_401_with_bad_token(self, tmp_path):
+        """get_queue() returns 401 when token is wrong."""
+        import asyncio
+        from praxis.api import get_queue
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "secret", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_http_request(auth_header="Bearer wrong")
+            response = asyncio.run(get_queue(req))
+
+        assert response.status_code == 401

@@ -144,7 +144,7 @@
     "depends_on": [
       "api-core-auth"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "api-queue-mutations",

@@ -88,3 +88,11 @@ Summary: Created praxis/api.py with _check_token(request) -> Response|None and _
 Files changed: praxis/api.py (new), tests/test_api.py (new), .env.example (new Web UI + API section), feature_list.json (api-core-auth passes=true)
 Next session should: Implement api-status-queue-list (priority 11, depends on api-core-auth which now passes) — GET /api/status returning {version, queue_stats, daemon_running} and GET /api/queue with pagination. Add handlers to praxis/api.py and wire them into mcp_server.py routes list. Tests: test_status_returns_json, test_queue_list_empty, test_queue_list_with_tasks. Use _check_token at the top of each handler; queue data from .praxis/queue/tasks.jsonl; daemon check via .praxis/praxis.pid.
 ---
+--- Session 10: api-status-queue-list ---
+Date: 2026-06-02
+Feature: GET /api/status and GET /api/queue endpoints in praxis/api.py
+Status: COMPLETE
+Summary: Added get_status() async handler returning {version, queue_stats, daemon_running} and get_queue() async handler accepting ?status=/?limit=/?offset= and returning {tasks: [...], total: int}. Added _workspace_root() and _is_daemon_running() helpers. daemon_running checks .praxis/praxis.pid via os.kill(pid, 0). Each handler calls _check_token() at entry. Added 8 new tests (TestGetStatus x3, TestGetQueue x5) in tests/test_api.py using asyncio.run(). All 1131 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/api.py (get_status, get_queue, _workspace_root, _is_daemon_running, _VERSION constant), tests/test_api.py (8 new tests in TestGetStatus and TestGetQueue), feature_list.json (api-status-queue-list passes=true)
+Next session should: Implement trust-store-core (priority 40, no depends_on) — create praxis/trust.py with TrustStore and TrustLevel enum. OWNER/ADMIN/USER/BLOCKED tiers; env vars PRAXIS_OWNER_IDS/PRAXIS_ADMIN_IDS take precedence over convergence.yaml channels.<ch>.trust_ids; PRAXIS_DEFAULT_TRUST defaults to "user". Also eligible: compaction-claude-runtime (priority 42), semantic-store-core (priority 44), hooks-file-watcher (priority 46).
+---
