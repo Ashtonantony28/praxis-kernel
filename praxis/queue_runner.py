@@ -108,6 +108,11 @@ def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue, *, notifi
     After all retries exhausted, task is dead-lettered to queue_dir/dead_letter.jsonl.
     """
     queue.update_status(task.id, "running")
+    try:
+        from .event_bus import TASK_STARTED, get_event_bus
+        get_event_bus().publish_sync(TASK_STARTED, {"task_id": task.id})
+    except Exception:
+        pass
     sys.stderr.write(f"[praxis] running task {task.id}: {task.prompt[:80]}\n")
 
     last_exc: Exception | None = None
@@ -115,6 +120,11 @@ def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue, *, notifi
         try:
             result = orch.run(task.prompt)
             queue.update_status(task.id, "done", result=result)
+            try:
+                from .event_bus import TASK_COMPLETED, get_event_bus
+                get_event_bus().publish_sync(TASK_COMPLETED, {"task_id": task.id})
+            except Exception:
+                pass
             queue.write_result(task.id, result)
             sys.stderr.write(f"[praxis] task {task.id} done\n")
             # Append to conversation log — best-effort
@@ -154,6 +164,11 @@ def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue, *, notifi
     )
     queue.move_to_dead_letter(task, error_str, _TASK_MAX_RETRIES)
     try:
+        from .event_bus import TASK_FAILED, get_event_bus
+        get_event_bus().publish_sync(TASK_FAILED, {"task_id": task.id})
+    except Exception:
+        pass
+    try:
         from .memory.conversation_log import ConversationLog
         from .config import Config as _Config
         _cfg = _Config.from_env()
@@ -180,6 +195,11 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
         cp = Checkpoint(task_id=task.id, stages=task.stages)
 
     queue.update_status(task.id, "running")
+    try:
+        from .event_bus import TASK_STARTED, get_event_bus
+        get_event_bus().publish_sync(TASK_STARTED, {"task_id": task.id})
+    except Exception:
+        pass
     sys.stderr.write(f"[praxis] running staged task {task.id} ({len(task.stages)} stages)\n")
 
     try:
@@ -203,6 +223,11 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
 
         final = cp.final_result()
         queue.update_status(task.id, "done", result=final)
+        try:
+            from .event_bus import TASK_COMPLETED, get_event_bus
+            get_event_bus().publish_sync(TASK_COMPLETED, {"task_id": task.id})
+        except Exception:
+            pass
         queue.write_result(task.id, final)
         cp_store.remove(task.id)
         sys.stderr.write(f"[praxis] task {task.id} done (all stages)\n")
@@ -210,6 +235,11 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
     except Exception as exc:
         cp_store.save(cp)
         queue.update_status(task.id, "failed", error=str(exc))
+        try:
+            from .event_bus import TASK_FAILED, get_event_bus
+            get_event_bus().publish_sync(TASK_FAILED, {"task_id": task.id})
+        except Exception:
+            pass
         sys.stderr.write(f"[praxis] task {task.id} failed at stage: {exc}\n")
 
 
@@ -309,6 +339,7 @@ def _start_ambient_monitor(queue: TaskQueue, workspace_root: Path) -> None:
         sys.stderr.write(f"[praxis] ambient monitor failed to start: {exc}\n")
 
 
+# TODO: TASK_QUEUED emitted from api.py POST /api/queue
 def run_queue_loop(workspace: Path) -> None:
     """Main queue processing loop — polls for tasks and runs them."""
     signal.signal(signal.SIGTERM, _handle_sigterm)

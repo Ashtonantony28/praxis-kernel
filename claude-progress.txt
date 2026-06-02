@@ -56,3 +56,11 @@ Summary: Created praxis/event_bus.py with EventBus (subscribe/unsubscribe/publis
 Files changed: praxis/event_bus.py (new), tests/test_event_bus.py (new), feature_list.json (event-bus-core passes=true)
 Next session should: Implement trust-store-core (priority 40) — create praxis/trust.py with TrustStore and TrustLevel enum. No depends_on but check ARCHITECTURE.md trust model: env vars PRAXIS_OWNER_IDS/PRAXIS_ADMIN_IDS take precedence over convergence.yaml channels.<ch>.trust_ids; PRAXIS_DEFAULT_TRUST defaults to "user". Also eligible: queue-runner-events (priority 6, depends on event-bus-core which now passes) or scheduler-emit-event (priority 7, same dep).
 ---
+--- Session 6: event-bus-queue-wiring ---
+Date: 2026-06-02
+Feature: Wire TASK_STARTED/COMPLETED/FAILED events into queue_runner.py transition points
+Status: COMPLETE
+Summary: Added lazy event bus emission calls (via try/except import of get_event_bus) at all six transition points in queue_runner.py: TASK_STARTED after update_status(running) in both _run_atomic_task and _run_staged_task; TASK_COMPLETED after update_status(done) in both; TASK_FAILED after move_to_dead_letter() in _run_atomic_task and after update_status(failed) in _run_staged_task. Added TODO comment above run_queue_loop() noting TASK_QUEUED will come from api.py. Patching via praxis.event_bus.get_event_bus (not praxis.queue_runner.get_event_bus) because imports are lazy. All 1108 tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/queue_runner.py (event emissions at 6 transition points + TODO comment), tests/test_queue_runner.py (3 new tests), feature_list.json (event-bus-queue-wiring passes=true)
+Next session should: Implement event-bus-scheduler-wiring (priority 7, depends on event-bus-core which passes) -- emit TASK_QUEUED from scheduler when it enqueues cron tasks, and HEARTBEAT_FIRED from check_heartbeat. Same lazy-import pattern; patch praxis.event_bus.get_event_bus not praxis.scheduler.get_event_bus.
+---

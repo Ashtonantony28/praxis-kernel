@@ -421,3 +421,50 @@ class TestDaemonCrashRecovery:
         assert tasks[done_task.id].status == "done"
         assert tasks[running_task.id].status == "failed"
         assert "interrupted" in (tasks[running_task.id].error or "")
+
+
+# ---------- EventBus wiring ----------
+
+
+def test_queue_runner_emits_started(queue: TaskQueue, mock_orch: MagicMock):
+    """TASK_STARTED is published via the event bus when a task transitions to running."""
+    from praxis.event_bus import TASK_STARTED
+    task = Task.create("emit started")
+    queue.append(task)
+
+    mock_bus = MagicMock()
+    with patch("praxis.event_bus.get_event_bus", return_value=mock_bus):
+        _run_atomic_task(task, mock_orch, queue)
+
+    mock_bus.publish_sync.assert_any_call(TASK_STARTED, {"task_id": task.id})
+
+
+def test_queue_runner_emits_completed(queue: TaskQueue, mock_orch: MagicMock):
+    """TASK_COMPLETED is published via the event bus when a task finishes successfully."""
+    from praxis.event_bus import TASK_COMPLETED
+    task = Task.create("emit completed")
+    queue.append(task)
+
+    mock_bus = MagicMock()
+    with patch("praxis.event_bus.get_event_bus", return_value=mock_bus):
+        _run_atomic_task(task, mock_orch, queue)
+
+    mock_bus.publish_sync.assert_any_call(TASK_COMPLETED, {"task_id": task.id})
+
+
+def test_queue_runner_emits_failed(queue: TaskQueue, mock_orch: MagicMock):
+    """TASK_FAILED is published via the event bus after all retries are exhausted."""
+    from praxis.event_bus import TASK_FAILED
+    mock_orch.run.side_effect = RuntimeError("always fails")
+    task = Task.create("emit failed")
+    queue.append(task)
+
+    mock_bus = MagicMock()
+    with (
+        patch("praxis.event_bus.get_event_bus", return_value=mock_bus),
+        patch("praxis.queue_runner._TASK_MAX_RETRIES", 1),
+        patch("praxis.queue_runner.time.sleep"),
+    ):
+        _run_atomic_task(task, mock_orch, queue)
+
+    mock_bus.publish_sync.assert_any_call(TASK_FAILED, {"task_id": task.id})
