@@ -195,3 +195,152 @@ async def get_queue(request: Request) -> Response:
     ]
 
     return JSONResponse({"tasks": tasks_out, "total": total})
+
+
+async def post_queue(request: Request) -> Response:
+    """POST /api/queue — add a new task to the queue.
+
+    Request body (JSON)::
+
+        {
+          "prompt": "string (required)",
+          "priority": 3,
+          "mode": "build"
+        }
+
+    Returns::
+
+        {"task_id": "..."}
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "Request body must be valid JSON"},
+            status_code=400,
+        )
+
+    prompt = body.get("prompt", "")
+    if not prompt or not isinstance(prompt, str):
+        return JSONResponse(
+            {"error": "Bad Request", "detail": "'prompt' field is required and must be a non-empty string"},
+            status_code=400,
+        )
+
+    try:
+        priority = int(body.get("priority", 3))
+    except (ValueError, TypeError):
+        priority = 3
+
+    from praxis.queue import Task, TaskQueue
+
+    root = _workspace_root()
+    queue = TaskQueue(root / ".praxis" / "queue")
+    task = Task.create(prompt=prompt, priority=priority)
+    queue.append(task)
+
+    # Emit TASK_QUEUED event — fire-and-forget; never fail the request.
+    try:
+        from praxis.event_bus import TASK_QUEUED, get_event_bus
+        get_event_bus().publish_sync(TASK_QUEUED, {"task_id": task.id, "priority": priority})
+    except Exception:
+        pass
+
+    return JSONResponse({"task_id": task.id}, status_code=201)
+
+
+async def get_queue_task(request: Request) -> Response:
+    """GET /api/queue/{task_id} — full task detail including result.
+
+    Returns::
+
+        {
+          "id": "...",
+          "prompt": "...",
+          "status": "...",
+          "priority": 0,
+          "created_at": "...",
+          "started_at": "...|null",
+          "completed_at": "...|null",
+          "result": "...|null",
+          "error": "...|null",
+          "stages": [...|null]
+        }
+
+    If a result file exists at results/{id}.txt, its content is returned as
+    ``result`` even when the Task.result field is None.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    task_id = request.path_params.get("task_id", "")
+
+    from praxis.queue import TaskQueue
+
+    root = _workspace_root()
+    queue = TaskQueue(root / ".praxis" / "queue")
+    all_tasks = queue._read_all()
+
+    task = next((t for t in all_tasks if t.id == task_id), None)
+    if task is None:
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Task '{task_id}' not found"},
+            status_code=404,
+        )
+
+    task_dict = task.to_dict()
+
+    # Supplement result from results file if not already set.
+    if task_dict.get("result") is None:
+        result_file = queue.results_dir / f"{task_id}.txt"
+        if result_file.exists():
+            task_dict["result"] = result_file.read_text()
+
+    return JSONResponse(task_dict)
+
+
+async def delete_queue_task(request: Request) -> Response:
+    """DELETE /api/queue/{task_id} — cancel a pending task.
+
+    Only pending tasks can be cancelled.
+
+    Returns:
+        204 No Content on success.
+        404 if task not found.
+        409 Conflict if task is not in 'pending' status.
+    """
+    auth_err = _check_token(request)
+    if auth_err is not None:
+        return auth_err
+
+    task_id = request.path_params.get("task_id", "")
+
+    from praxis.queue import TaskQueue
+
+    root = _workspace_root()
+    queue = TaskQueue(root / ".praxis" / "queue")
+    all_tasks = queue._read_all()
+
+    task = next((t for t in all_tasks if t.id == task_id), None)
+    if task is None:
+        return JSONResponse(
+            {"error": "Not Found", "detail": f"Task '{task_id}' not found"},
+            status_code=404,
+        )
+
+    if task.status != "pending":
+        return JSONResponse(
+            {
+                "error": "Conflict",
+                "detail": f"Task '{task_id}' cannot be cancelled — status is '{task.status}' (only 'pending' tasks can be cancelled)",
+            },
+            status_code=409,
+        )
+
+    queue.update_status(task_id, "failed", error="cancelled")
+    return Response(status_code=204)

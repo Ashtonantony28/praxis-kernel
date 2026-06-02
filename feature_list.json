@@ -160,7 +160,7 @@
     "depends_on": [
       "api-status-queue-list"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "api-approvals",

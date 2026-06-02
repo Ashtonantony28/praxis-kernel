@@ -317,3 +317,297 @@ class TestGetQueue:
             response = asyncio.run(get_queue(req))
 
         assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /api/queue
+# ---------------------------------------------------------------------------
+
+def _make_post_request(body: dict, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request with an async json() method."""
+    import asyncio
+
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.query_params = {}
+
+    async def _json():
+        return body
+
+    req.json = _json
+    return req
+
+
+def _make_invalid_json_request() -> MagicMock:
+    """Return a mock Starlette Request whose json() raises an exception."""
+    import asyncio
+
+    req = MagicMock()
+    req.headers = {}
+    req.query_params = {}
+
+    async def _json():
+        raise ValueError("not valid json")
+
+    req.json = _json
+    return req
+
+
+class TestPostQueue:
+    def test_queue_add_creates_task(self, tmp_path):
+        """post_queue() creates a task and returns {task_id}."""
+        import asyncio
+        import json
+        from praxis.queue import TaskQueue
+        from praxis.api import post_queue
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_post_request({"prompt": "do something useful"})
+            response = asyncio.run(post_queue(req))
+
+        assert response.status_code == 201
+        body = json.loads(response.body)
+        assert "task_id" in body
+
+        # Verify the task was actually written to the queue.
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        tasks = tq._read_all()
+        assert len(tasks) == 1
+        assert tasks[0].id == body["task_id"]
+        assert tasks[0].prompt == "do something useful"
+
+    def test_queue_add_emits_event(self, tmp_path):
+        """post_queue() emits TASK_QUEUED event on the event bus."""
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        from praxis.api import post_queue
+
+        mock_bus = MagicMock()
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            with patch("praxis.event_bus.get_event_bus", return_value=mock_bus):
+                req = _make_post_request({"prompt": "emit test"})
+                asyncio.run(post_queue(req))
+
+        mock_bus.publish_sync.assert_called_once()
+        event_name = mock_bus.publish_sync.call_args[0][0]
+        from praxis.event_bus import TASK_QUEUED
+        assert event_name == TASK_QUEUED
+
+    def test_queue_add_uses_default_priority(self, tmp_path):
+        """post_queue() defaults priority to 3 when not provided."""
+        import asyncio
+        import json
+        from praxis.queue import TaskQueue
+        from praxis.api import post_queue
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_post_request({"prompt": "check priority default"})
+            asyncio.run(post_queue(req))
+
+        tq = TaskQueue(tmp_path / ".praxis" / "queue")
+        tasks = tq._read_all()
+        assert tasks[0].priority == 3
+
+    def test_queue_add_respects_custom_priority(self, tmp_path):
+        """post_queue() uses the provided priority value."""
+        import asyncio
+        from praxis.queue import TaskQueue
+        from praxis.api import post_queue
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_post_request({"prompt": "high priority task", "priority": 1})
+            asyncio.run(post_queue(req))
+
+        tq = TaskQueue(tmp_path / ".praxis" / "queue")
+        tasks = tq._read_all()
+        assert tasks[0].priority == 1
+
+    def test_queue_add_400_missing_prompt(self, tmp_path):
+        """post_queue() returns 400 when 'prompt' field is missing."""
+        import asyncio
+        from praxis.api import post_queue
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_post_request({"mode": "build"})
+            response = asyncio.run(post_queue(req))
+
+        assert response.status_code == 400
+
+    def test_queue_add_400_invalid_json(self, tmp_path):
+        """post_queue() returns 400 when request body is not valid JSON."""
+        import asyncio
+        from praxis.api import post_queue
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_invalid_json_request()
+            response = asyncio.run(post_queue(req))
+
+        assert response.status_code == 400
+
+    def test_queue_add_401_bad_token(self, tmp_path):
+        """post_queue() returns 401 when token is wrong."""
+        import asyncio
+        from praxis.api import post_queue
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "secret", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_post_request({"prompt": "test"}, auth_header="Bearer wrong")
+            response = asyncio.run(post_queue(req))
+
+        assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /api/queue/{task_id}
+# ---------------------------------------------------------------------------
+
+def _make_path_request(path_params: dict, auth_header: str = "") -> MagicMock:
+    """Return a mock Starlette Request with path_params."""
+    req = MagicMock()
+    req.headers = {"Authorization": auth_header} if auth_header else {}
+    req.query_params = {}
+    req.path_params = path_params
+    return req
+
+
+class TestGetQueueTask:
+    def test_queue_task_detail(self, tmp_path):
+        """get_queue_task() returns full task dict for a known task_id."""
+        import asyncio
+        import json
+        from praxis.queue import Task, TaskQueue
+        from praxis.api import get_queue_task
+
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        task = Task.create(prompt="detail test", priority=2)
+        tq.append(task)
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_path_request({"task_id": task.id})
+            response = asyncio.run(get_queue_task(req))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["id"] == task.id
+        assert body["prompt"] == "detail test"
+        assert body["status"] == "pending"
+
+    def test_queue_task_detail_404(self, tmp_path):
+        """get_queue_task() returns 404 for an unknown task_id."""
+        import asyncio
+        from praxis.api import get_queue_task
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_path_request({"task_id": "nonexistent000"})
+            response = asyncio.run(get_queue_task(req))
+
+        assert response.status_code == 404
+
+    def test_queue_task_detail_includes_result_file(self, tmp_path):
+        """get_queue_task() includes result from results/{id}.txt if exists."""
+        import asyncio
+        import json
+        from praxis.queue import Task, TaskQueue
+        from praxis.api import get_queue_task
+
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        task = Task.create(prompt="result file test", priority=0)
+        tq.append(task)
+        tq.write_result(task.id, "the result content")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_path_request({"task_id": task.id})
+            response = asyncio.run(get_queue_task(req))
+
+        body = json.loads(response.body)
+        assert body["result"] == "the result content"
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/queue/{task_id}
+# ---------------------------------------------------------------------------
+
+class TestDeleteQueueTask:
+    def test_queue_cancel_pending(self, tmp_path):
+        """delete_queue_task() cancels a pending task with 204."""
+        import asyncio
+        from praxis.queue import Task, TaskQueue
+        from praxis.api import delete_queue_task
+
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        task = Task.create(prompt="cancel me", priority=0)
+        tq.append(task)
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_path_request({"task_id": task.id})
+            response = asyncio.run(delete_queue_task(req))
+
+        assert response.status_code == 204
+
+        # Verify status was updated to 'failed' with error='cancelled'.
+        updated = tq._read_all()
+        assert updated[0].status == "failed"
+        assert updated[0].error == "cancelled"
+
+    def test_queue_cancel_running_409(self, tmp_path):
+        """delete_queue_task() returns 409 when task is running."""
+        import asyncio
+        from praxis.queue import Task, TaskQueue
+        from praxis.api import delete_queue_task
+
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        task = Task.create(prompt="currently running", priority=0)
+        tq.append(task)
+        tq.update_status(task.id, "running")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_path_request({"task_id": task.id})
+            response = asyncio.run(delete_queue_task(req))
+
+        assert response.status_code == 409
+
+    def test_queue_cancel_done_409(self, tmp_path):
+        """delete_queue_task() returns 409 when task is already done."""
+        import asyncio
+        from praxis.queue import Task, TaskQueue
+        from praxis.api import delete_queue_task
+
+        queue_dir = tmp_path / ".praxis" / "queue"
+        tq = TaskQueue(queue_dir)
+        task = Task.create(prompt="already done", priority=0)
+        tq.append(task)
+        tq.update_status(task.id, "done")
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_path_request({"task_id": task.id})
+            response = asyncio.run(delete_queue_task(req))
+
+        assert response.status_code == 409
+
+    def test_queue_cancel_404_not_found(self, tmp_path):
+        """delete_queue_task() returns 404 for an unknown task_id."""
+        import asyncio
+        from praxis.api import delete_queue_task
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_path_request({"task_id": "doesnotexist00"})
+            response = asyncio.run(delete_queue_task(req))
+
+        assert response.status_code == 404
+
+    def test_queue_cancel_401_bad_token(self, tmp_path):
+        """delete_queue_task() returns 401 when token is wrong."""
+        import asyncio
+        from praxis.api import delete_queue_task
+
+        with patch.dict(os.environ, {"PRAXIS_UI_TOKEN": "secret", "PRAXIS_WORKSPACE_ROOT": str(tmp_path)}):
+            req = _make_path_request({"task_id": "anyid"}, auth_header="Bearer wrong")
+            response = asyncio.run(delete_queue_task(req))
+
+        assert response.status_code == 401

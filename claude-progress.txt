@@ -96,3 +96,19 @@ Summary: Added get_status() async handler returning {version, queue_stats, daemo
 Files changed: praxis/api.py (get_status, get_queue, _workspace_root, _is_daemon_running, _VERSION constant), tests/test_api.py (8 new tests in TestGetStatus and TestGetQueue), feature_list.json (api-status-queue-list passes=true)
 Next session should: Implement trust-store-core (priority 40, no depends_on) — create praxis/trust.py with TrustStore and TrustLevel enum. OWNER/ADMIN/USER/BLOCKED tiers; env vars PRAXIS_OWNER_IDS/PRAXIS_ADMIN_IDS take precedence over convergence.yaml channels.<ch>.trust_ids; PRAXIS_DEFAULT_TRUST defaults to "user". Also eligible: compaction-claude-runtime (priority 42), semantic-store-core (priority 44), hooks-file-watcher (priority 46).
 ---
+--- Session 11: api-queue-mutations ---
+Date: 2026-06-02
+Feature: POST /api/queue (add task), GET /api/queue/{id} (detail), DELETE /api/queue/{id} (cancel)
+Status: COMPLETE
+Summary: Added three new route handlers to praxis/api.py: post_queue() creates a task via TaskQueue.append(), emits TASK_QUEUED via lazy import (fire-and-forget try/except), returns {task_id} with 201; get_queue_task() returns full task dict plus result from results/{id}.txt if available; delete_queue_task() cancels pending tasks with 204, returns 404 if not found, 409 if not pending. Feature spec said "TaskQueue.add()" but that method doesn't exist — used TaskQueue.append() which is the established pattern. 15 new tests all pass; 1146 total tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/api.py (post_queue, get_queue_task, delete_queue_task handlers), tests/test_api.py (15 new tests in TestPostQueue, TestGetQueueTask, TestDeleteQueueTask), feature_list.json (api-queue-mutations passes=true)
+Next session should: Implement api-approvals (priority 13, depends on api-queue-mutations which now passes) — GET /api/approvals scans .praxis/staging/ for pending external actions; POST approve/reject/bulk. Scan files: external_actions.jsonl, slack/messages/*.json, events/*.ics, drafts/*.eml, wiki_updates.jsonl. Reuse --approve code path from __main__.py. Note: --approve logic is in __main__.py around line 503+; staging files are in .praxis/staging/; the approval status field is written inline.
+---
+--- Session 11: api-queue-mutations ---
+Date: 2026-06-02
+Feature: POST /api/queue (add task), GET /api/queue/{task_id} (detail), DELETE /api/queue/{task_id} (cancel)
+Status: COMPLETE
+Summary: Added three new route handlers to praxis/api.py: post_queue() creates a task via TaskQueue.append(), emits TASK_QUEUED via lazy import (fire-and-forget try/except), returns {task_id} with 201; get_queue_task() returns full task dict plus result from results/{id}.txt if available; delete_queue_task() cancels pending tasks with 204, returns 404 if not found, 409 if not pending. Feature spec said TaskQueue.add() but that method does not exist - used TaskQueue.append() which is the established pattern. 15 new tests all pass; 1146 total tests pass; 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/api.py (post_queue, get_queue_task, delete_queue_task handlers), tests/test_api.py (15 new tests in TestPostQueue, TestGetQueueTask, TestDeleteQueueTask), feature_list.json (api-queue-mutations passes=true)
+Next session should: Implement api-approvals (priority 13, depends on api-queue-mutations which now passes) -- GET /api/approvals scans .praxis/staging/ for pending external actions; POST approve/reject/bulk. Scan files: external_actions.jsonl, slack/messages/*.json, events/*.ics, drafts/*.eml, wiki_updates.jsonl. Reuse --approve code path from __main__.py around line 503+; staging files in .praxis/staging/.
+---
