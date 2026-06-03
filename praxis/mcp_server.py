@@ -481,6 +481,9 @@ class MCPServer:
                 Mount("/ui", app=StaticFiles(directory=str(ui_dist), html=True))
             )
 
+        from .hooks_engine import make_webhook_routes
+        extra_routes.extend(make_webhook_routes())
+
         app = Starlette(
             routes=[
                 Route("/sse", endpoint=sse_endpoint, methods=["GET"]),

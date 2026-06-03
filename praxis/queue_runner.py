@@ -339,6 +339,23 @@ def _start_ambient_monitor(queue: TaskQueue, workspace_root: Path) -> None:
         sys.stderr.write(f"[praxis] ambient monitor failed to start: {exc}\n")
 
 
+def _start_file_watcher(queue: TaskQueue) -> None:
+    """Start FileWatcher if PRAXIS_WATCH_PATHS is set.
+
+    Requires: pip install praxis[hooks]  (installs watchdog>=3.0).
+    Silently skips if PRAXIS_WATCH_PATHS is not configured or watchdog is absent.
+    """
+    if not os.environ.get("PRAXIS_WATCH_PATHS", "").strip():
+        return
+    try:
+        from .hooks_engine import FileWatcher
+        watcher = FileWatcher(queue)
+        watcher.start()
+        sys.stderr.write("[praxis] file watcher started\n")
+    except Exception as exc:
+        sys.stderr.write(f"[praxis] file watcher failed to start: {exc}\n")
+
+
 # TODO: TASK_QUEUED emitted from api.py POST /api/queue
 def run_queue_loop(workspace: Path) -> None:
     """Main queue processing loop — polls for tasks and runs them."""
@@ -370,6 +387,7 @@ def run_queue_loop(workspace: Path) -> None:
 
     _start_scheduler_thread(queue, workspace)
     _start_ambient_monitor(queue, workspace)
+    _start_file_watcher(queue)
 
     import os as _os
     if _os.environ.get("PRAXIS_MORNING_NOTIFY", "").lower() == "true":

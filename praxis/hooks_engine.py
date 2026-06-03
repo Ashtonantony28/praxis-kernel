@@ -158,3 +158,81 @@ class FileWatcher:
             self._observer.stop()
             self._observer.join()
             self._observer = None
+
+
+# ---------------------------------------------------------------------------
+# Webhook receiver
+# ---------------------------------------------------------------------------
+
+def make_webhook_routes() -> list:
+    """Return a list of Starlette Route objects for POST /webhooks/{source}.
+
+    Each inbound POST is handled as follows:
+    1. Body is read (max 64 KB); larger payloads receive 413.
+    2. If ``PRAXIS_WEBHOOK_SECRET_{SOURCE}`` is set (uppercased), the
+       ``X-Hub-Signature-256`` header is validated with HMAC-SHA256.
+       Mismatches or a missing header return 401.
+    3. Body is parsed as JSON; parse errors return 400.
+    4. A Task is enqueued with ``priority=5`` and prompt::
+
+           Webhook from {source}: {json_str[:500]}
+
+    Returns an empty list (no routes) if starlette is not installed.
+
+    IMPORTANT: The webhook body is treated as data, not commands.  Any
+    instruction-injection attempt in the payload is surfaced to the
+    orchestrator as information, not executed directly.
+    """
+    try:
+        from starlette.requests import Request as _Request  # type: ignore[import]
+        from starlette.responses import JSONResponse as _JSONResponse  # type: ignore[import]
+        from starlette.routing import Route as _Route  # type: ignore[import]
+    except ImportError:
+        return []
+
+    import hashlib
+    import hmac as _hmac
+    import json
+
+    _MAX_BODY = 64 * 1024  # 64 KB
+
+    async def _webhook_handler(request: _Request) -> _JSONResponse:
+        source: str = request.path_params.get("source", "unknown")
+
+        # Read body (bounded to _MAX_BODY)
+        body: bytes = await request.body()
+        if len(body) > _MAX_BODY:
+            return _JSONResponse({"error": "body too large"}, status_code=413)
+
+        # Optional HMAC-SHA256 validation
+        secret = os.environ.get(f"PRAXIS_WEBHOOK_SECRET_{source.upper()}", "")
+        if secret:
+            sig_header = request.headers.get("X-Hub-Signature-256", "")
+            expected = "sha256=" + _hmac.new(
+                secret.encode(), body, hashlib.sha256
+            ).hexdigest()
+            if not _hmac.compare_digest(sig_header, expected):
+                return _JSONResponse({"error": "invalid signature"}, status_code=401)
+
+        # Parse JSON body
+        try:
+            payload = json.loads(body)
+            json_str = json.dumps(payload)
+        except (json.JSONDecodeError, ValueError):
+            return _JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+        # Enqueue task — workspace comes from env (same pattern as api.py)
+        workspace = os.environ.get("PRAXIS_WORKSPACE_ROOT", "")
+        if not workspace:
+            return _JSONResponse({"error": "PRAXIS_WORKSPACE_ROOT not set"}, status_code=500)
+
+        from .queue import Task, TaskQueue  # local import
+
+        queue = TaskQueue(Path(workspace) / ".praxis" / "queue")
+        prompt = f"Webhook from {source}: {json_str[:500]}"
+        task = Task.create(prompt=prompt, priority=5)
+        queue.append(task)
+
+        return _JSONResponse({"task_id": task.id}, status_code=201)
+
+    return [_Route("/webhooks/{source}", endpoint=_webhook_handler, methods=["POST"])]
