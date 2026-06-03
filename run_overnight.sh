@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Runs run_session.py in a loop. On rate limit, waits 6 hours then retries.
-# Run this before sleeping. Kill it in the morning with Ctrl+C or kill <pid>.
 
 set -uo pipefail
 
 PROJECT_DIR="${1:-.}"
 LOG="overnight.log"
-RETRY_WAIT=21600  # 6 hours in seconds — safely past the 5-hour window reset
+RETRY_WAIT=21600  # 6 hours — safely past the 5-hour window reset
 
 if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
   echo "ERROR: ANTHROPIC_API_KEY is set. Run: unset ANTHROPIC_API_KEY"
@@ -34,21 +33,17 @@ print(len([x for x in f if not x['passes']]))
   /usr/bin/python run_session.py "$PROJECT_DIR" 2>&1 | tee -a "$LOG"
   EXIT_CODE=${PIPESTATUS[0]}
 
-  # Check if rate limit was hit (run_session.py writes INTERRUPTED to progress)
-  if grep -q "INTERRUPTED" claude-progress.txt 2>/dev/null; then
-    LAST=$(tail -5 claude-progress.txt)
-    if echo "$LAST" | grep -q "INTERRUPTED"; then
+  if [ "$EXIT_CODE" -ne 0 ]; then
+    # Check if log mentions session/rate limit
+    if tail -20 "$LOG" | grep -qiE "session limit|rate.limit|resets|quota|429|exceeded|overloaded"; then
       echo "" | tee -a "$LOG"
-      echo "=== Rate limit hit $(date). Waiting 6 hours before retry... ===" | tee -a "$LOG"
+      echo "=== Rate limit detected $(date). Waiting 6 hours... ===" | tee -a "$LOG"
       sleep $RETRY_WAIT
       echo "=== Retrying $(date) ===" | tee -a "$LOG"
-      continue
+    else
+      echo "=== Exited with code $EXIT_CODE $(date). Waiting 60s then retrying... ===" | tee -a "$LOG"
+      sleep 60
     fi
-  fi
-
-  if [ "$EXIT_CODE" -ne 0 ]; then
-    echo "=== run_session.py exited with code $EXIT_CODE. Waiting 60s then retrying... ===" | tee -a "$LOG"
-    sleep 60
     continue
   fi
 
