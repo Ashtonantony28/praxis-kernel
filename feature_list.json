@@ -10,7 +10,10 @@
       "Verify: test_linear_step_yes_writes_key_and_domain and test_linear_step_no_writes_nothing pass"
     ],
     "depends_on": [],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "wizard-notion-step",
@@ -25,7 +28,10 @@
     "depends_on": [
       "wizard-linear-step"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "wizard-calendar-step",
@@ -40,7 +46,10 @@
     "depends_on": [
       "wizard-notion-step"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "wizard-domains-additive",
@@ -55,7 +64,10 @@
     "depends_on": [
       "wizard-calendar-step"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "event-bus-core",
@@ -69,7 +81,10 @@
       "Verify: python -m pytest tests/test_event_bus.py -v \u2014 all 25+ tests pass"
     ],
     "depends_on": [],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "event-bus-queue-wiring",
@@ -85,7 +100,10 @@
     "depends_on": [
       "event-bus-core"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "event-bus-scheduler-wiring",
@@ -99,7 +117,10 @@
     "depends_on": [
       "event-bus-core"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "event-bus-ambient-wiring",
@@ -113,7 +134,10 @@
     "depends_on": [
       "event-bus-core"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "api-core-auth",
@@ -129,7 +153,10 @@
     "depends_on": [
       "event-bus-queue-wiring"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "api-status-queue-list",
@@ -144,7 +171,10 @@
     "depends_on": [
       "api-core-auth"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "api-queue-mutations",
@@ -160,7 +190,10 @@
     "depends_on": [
       "api-status-queue-list"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "api-approvals",
@@ -176,7 +209,10 @@
     "depends_on": [
       "api-queue-mutations"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "api-schedule",
@@ -192,7 +228,10 @@
     "depends_on": [
       "api-approvals"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "api-wiki-memory-integrations",
@@ -210,7 +249,10 @@
     "depends_on": [
       "api-schedule"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "mcp-websocket-endpoint",
@@ -226,7 +268,10 @@
     "depends_on": [
       "api-wiki-memory-integrations"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "mcp-routes-host-static",
@@ -243,7 +288,10 @@
     "depends_on": [
       "mcp-websocket-endpoint"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-scaffold",
@@ -260,7 +308,10 @@
     "depends_on": [
       "mcp-routes-host-static"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-design-system",
@@ -276,7 +327,10 @@
       "ui-scaffold"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-api-ws-foundation",
@@ -292,7 +346,10 @@
       "ui-design-system"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-layout-router",
@@ -308,7 +365,10 @@
       "ui-api-ws-foundation"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-chat-screen",
@@ -326,7 +386,10 @@
       "ui-layout-router"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-approvals-screen",
@@ -345,7 +408,10 @@
       "ui-chat-screen"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-task-board-screen",
@@ -364,7 +430,10 @@
       "ui-approvals-screen"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-wiki-screen",
@@ -381,7 +450,10 @@
       "ui-task-board-screen"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-schedule-screen",
@@ -398,7 +470,10 @@
       "ui-wiki-screen"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-settings-screen",
@@ -417,7 +492,10 @@
       "ui-schedule-screen"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "ui-build-integration",
@@ -433,7 +511,10 @@
       "ui-settings-screen"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "trust-store-core",
@@ -450,7 +531,10 @@
     ],
     "depends_on": [],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "trust-channel-wiring",
@@ -468,7 +552,10 @@
       "trust-store-core"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "compaction-claude-runtime",
@@ -483,7 +570,10 @@
       "Verify: tests/test_compaction.py \u2014 triggered at threshold, not below, history rebuilt correctly"
     ],
     "depends_on": [],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "compaction-openai-runtime",
@@ -498,7 +588,10 @@
     "depends_on": [
       "compaction-claude-runtime"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "semantic-store-core",
@@ -515,7 +608,10 @@
       "Verify: tests/test_memory_store.py with mocked chromadb \u2014 all 20+ tests pass"
     ],
     "depends_on": [],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "semantic-wiring",
@@ -532,7 +628,10 @@
     "depends_on": [
       "semantic-store-core"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "hooks-file-watcher",
@@ -548,7 +647,10 @@
       "Verify: test_file_watcher_enqueues_on_create, test_file_watcher_ignores_non_matching_extension pass"
     ],
     "depends_on": [],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "hooks-webhook-wiring",
@@ -565,7 +667,10 @@
       "hooks-file-watcher",
       "mcp-routes-host-static"
     ],
-    "passes": true
+    "passes": true,
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "voice-transcriber",
@@ -581,7 +686,10 @@
     ],
     "depends_on": [],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   },
   {
     "id": "voice-telegram-wiring",
@@ -598,6 +706,9 @@
       "voice-transcriber"
     ],
     "passes": true,
-    "notes": "DEFERRED: out of scope for Praxis v1 product"
+    "notes": "DEFERRED: out of scope for Praxis v1 product",
+    "tier": 2,
+    "fan_out_eligible": false,
+    "fan_out_unit": null
   }
 ]
