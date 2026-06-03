@@ -565,7 +565,7 @@
       "hooks-file-watcher",
       "mcp-routes-host-static"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "voice-transcriber",
