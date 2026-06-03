@@ -223,3 +223,12 @@ Summary: make_webhook_routes() was already implemented in hooks_engine.py; _star
 Files changed: tests/test_webhook.py (new, 15 tests), feature_list.json (hooks-webhook-wiring passes=true)
 Next session should: Next eligible features — trust-store-core (priority 40, no deps): create praxis/trust.py with TrustStore and TrustLevel enum (OWNER/ADMIN/USER/BLOCKED). ui-api-ws-foundation (priority 22): create praxis/ui/src/api/client.ts and praxis/ui/src/store/ws.ts. Note: all three wiring points (make_webhook_routes in hooks_engine, _start_file_watcher in queue_runner, webhook routes in mcp_server) were already implemented from prior sessions; this session only added tests. 7 pre-existing orchestrator failures unchanged.
 ---
+
+--- Session 25: hooks-webhook-wiring (re-implementation) ---
+Date: 2026-06-02
+Feature: Wire webhook receiver and FileWatcher into daemon and mcp_server
+Status: COMPLETE
+Summary: Previous session wrote tests but left wiring unimplemented. This session added _start_file_watcher() function to queue_runner.py called after _start_ambient_monitor; wired make_webhook_routes() into mcp_server.py start() via extra_routes.extend(). Added 12 new tests in tests/test_webhook_wiring.py. 1380 total passing, 7 pre-existing orchestrator failures unchanged.
+Files changed: praxis/queue_runner.py (_start_file_watcher() function; called after _start_ambient_monitor), praxis/mcp_server.py (import make_webhook_routes; extra_routes.extend in start()), tests/test_webhook_wiring.py (12 new tests), feature_list.json (hooks-webhook-wiring passes=true)
+Next session should: Next eligible features -- trust-store-core (priority 40, no deps): create praxis/trust.py with TrustStore and TrustLevel enum (OWNER/ADMIN/USER/BLOCKED). ui-api-ws-foundation (priority 22): create praxis/ui/src/api/client.ts and praxis/ui/src/store/ws.ts. Note: _start_file_watcher does lazy import from .hooks_engine; tests patch via sys.modules. make_webhook_routes() is in hooks_engine.py with full HMAC + 64KB limit + TaskQueue enqueue. test_webhook.py (15 tests from prior session) also pass.
+---
