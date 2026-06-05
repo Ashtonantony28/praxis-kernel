@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from .config import Config
@@ -35,6 +36,21 @@ def _create_runtimes(conv: ConvergenceConfig):
 
     Returns (default_runtime, overrides_dict).
     """
+    from .runtime import ClaudeCodeCLIRuntime
+    _runtime_env = os.environ.get("PRAXIS_RUNTIME", "").lower().strip()
+    _has_oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+    _has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+    if _runtime_env == "claudecode" or (
+        not _runtime_env and _has_oauth and not _has_api_key
+    ):
+        rt = ClaudeCodeCLIRuntime.from_env()
+        sys.stderr.write("[praxis] runtime: claudecode (claude -p subprocess)\n")
+        # ClaudeCodeCLIRuntime handles all tasks directly — return immediately
+        # with a single-runtime dict keyed to conv.default_runtime so the
+        # rest of _create_runtimes() and the orchestrator work unchanged
+        return rt, {}
+
     runtimes: dict[str, Runtime] = {}
 
     if conv.needs_claude():

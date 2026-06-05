@@ -33,13 +33,16 @@ def fake_local_rt():
     return _make_fake_runtime("local")
 
 
+_SDK_ENV = {"PRAXIS_RUNTIME": "", "ANTHROPIC_API_KEY": "test-key", "CLAUDE_CODE_OAUTH_TOKEN": ""}
+
+
 def test_create_runtimes_claude_only(fake_claude_rt):
     """Claude-only config creates one runtime, no overrides."""
     from praxis.__main__ import _create_runtimes
 
     conv = ConvergenceConfig(default_runtime="claude")
 
-    with patch("praxis.__main__.ClaudeCodeRuntime") as mock_cls:
+    with patch.dict("os.environ", _SDK_ENV), patch("praxis.__main__.ClaudeCodeRuntime") as mock_cls:
         mock_cls.from_env.return_value = fake_claude_rt
         default, overrides = _create_runtimes(conv)
 
@@ -54,7 +57,7 @@ def test_create_runtimes_local_only(fake_local_rt):
 
     conv = ConvergenceConfig(default_runtime="local")
 
-    with patch("praxis.__main__.LocalRuntime") as mock_cls:
+    with patch.dict("os.environ", _SDK_ENV), patch("praxis.__main__.LocalRuntime") as mock_cls:
         mock_cls.from_env.return_value = fake_local_rt
         default, overrides = _create_runtimes(conv)
 
@@ -73,6 +76,7 @@ def test_create_runtimes_mixed(fake_claude_rt, fake_local_rt):
     )
 
     with (
+        patch.dict("os.environ", _SDK_ENV),
         patch("praxis.__main__.ClaudeCodeRuntime") as mock_claude,
         patch("praxis.__main__.LocalRuntime") as mock_local,
     ):
@@ -93,7 +97,7 @@ def test_create_runtimes_override_same_as_default_excluded(fake_claude_rt):
         overrides={"builder": "claude"},
     )
 
-    with patch("praxis.__main__.ClaudeCodeRuntime") as mock_cls:
+    with patch.dict("os.environ", _SDK_ENV), patch("praxis.__main__.ClaudeCodeRuntime") as mock_cls:
         mock_cls.from_env.return_value = fake_claude_rt
         default, overrides = _create_runtimes(conv)
 
@@ -107,7 +111,7 @@ def test_create_runtimes_stderr_logging(fake_claude_rt, capsys):
 
     conv = ConvergenceConfig(default_runtime="claude")
 
-    with patch("praxis.__main__.ClaudeCodeRuntime") as mock_cls:
+    with patch.dict("os.environ", _SDK_ENV), patch("praxis.__main__.ClaudeCodeRuntime") as mock_cls:
         mock_cls.from_env.return_value = fake_claude_rt
         _create_runtimes(conv)
 
