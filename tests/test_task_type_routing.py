@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -338,7 +339,16 @@ class TestQueueRunnerTaskTypeRouting:
         conv.default_runtime = "claude"
         conv.overrides = {}
 
-        with patch("praxis.queue_runner.ClaudeCodeRuntime") as MockClaude:
+        # Isolate from env vars that trigger the claudecode early-return path.
+        # PRAXIS_RUNTIME=claudecode (or oauth-without-api-key auto-detect) would
+        # bypass ClaudeCodeRuntime entirely; force the standard path here.
+        env_overrides = {
+            "PRAXIS_RUNTIME": "claude",
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
+            "ANTHROPIC_API_KEY": "sk-test",
+        }
+        with patch("praxis.queue_runner.ClaudeCodeRuntime") as MockClaude, \
+             patch.dict(os.environ, env_overrides):
             MockClaude.from_env.return_value = mock_rt
             result = _create_runtimes_for_queue(conv)
 

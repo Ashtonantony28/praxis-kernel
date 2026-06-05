@@ -78,7 +78,11 @@ class ConvergenceConfig:
         cloud_section = data.get("cloud", {})
 
         # Default runtime: env var > file > "claude"
+        # Note: "claudecode" is a queue_runner-level override that bypasses convergence
+        # config routing; treat it as absent so convergence.yaml defaults apply normally.
         env_runtime = os.environ.get("PRAXIS_RUNTIME")
+        if env_runtime and env_runtime.lower() == "claudecode":
+            env_runtime = None
         file_default = runtimes_section.get("default", "claude")
         default_runtime = (env_runtime or file_default).lower()
 

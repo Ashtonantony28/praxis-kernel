@@ -256,3 +256,21 @@ Summary: Added ClaudeCodeCLIRuntime to praxis/runtime/claude_code.py. The class 
 Files changed: praxis/runtime/claude_code.py (ClaudeCodeCLIRuntime class, Path import), praxis/runtime/__init__.py (export + get_default_runtime factory), praxis/queue_runner.py (early return for claudecode runtime), .env.example (PRAXIS_RUNTIME and PRAXIS_TASK_TIMEOUT section), tests/test_cli_runtime.py (new, 10 tests)
 Next session should: If model tier is upgraded, update PRAXIS_RUNTIME to 'claude' (SDK) in .env and revert MODEL_MAP 'sonnet' alias from claude-haiku-4-5 back to claude-sonnet-4-6. ClaudeCodeCLIRuntime.run_loop() ignores system prompt and tool_schemas — any feature that relies on custom system prompt injection (e.g. semantic memory context) will need the prompt baked into user_message or the orchestrator adapted. get_default_runtime() is exported but not yet used by __main__.py — wire it there if needed.
 ***
+--- Session 29: fix-cli-runtime-test-failures ---
+Date: 2026-06-05
+Feature: Fix 5 test failures from ClaudeCodeCLIRuntime integration
+Status: COMPLETE
+Summary: PRAXIS_RUNTIME=claudecode in the environment caused ConvergenceConfig.load() to
+  raise SystemExit("unknown runtime 'claudecode'") before reaching the task_types section
+  (since VALID_RUNTIMES only contains claude/local/cloud). Fixed by treating "claudecode"
+  as absent in ConvergenceConfig.load() — it is a queue_runner-level override that bypasses
+  convergence config routing entirely. Also added env-isolation patch to
+  test_create_runtimes_returns_three_values so it doesn't hit the claudecode early-return
+  path in _create_runtimes_for_queue().
+Files changed: praxis/convergence.py (treat PRAXIS_RUNTIME=claudecode as None in load()),
+  tests/test_task_type_routing.py (import os; add patch.dict env isolation to
+  test_create_runtimes_returns_three_values)
+Next session should: If needs_claude()/needs_cloud()/needs_local() helpers need to account
+  for claudecode in the all_runtimes map, review whether the queue_runner routing tests need
+  updating. The claudecode runtime bypasses all convergence routing so this is unlikely.
+***
