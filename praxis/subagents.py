@@ -8,7 +8,7 @@ from pathlib import Path
 
 MODEL_MAP: dict[str, str] = {
     "haiku": "claude-haiku-4-5-20251001",
-    "sonnet": "claude-haiku-4-5",
+    "sonnet": "claude-sonnet-4-6",
     "opus": "claude-opus-4-6",
 }
 
