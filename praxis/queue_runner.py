@@ -14,7 +14,7 @@ from .config import Config
 from .convergence import ConvergenceConfig, detect_task_type
 from .orchestrator import Orchestrator
 from .queue import Task, TaskQueue
-from .runtime import ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
+from .runtime import ClaudeCodeCLIRuntime, ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
 from .runtime.base import Runtime
 
 
@@ -39,6 +39,16 @@ def _create_runtimes_for_queue(
     Returns (default_runtime, subagent_overrides, all_runtimes_by_name).
     all_runtimes_by_name is keyed by runtime name string (e.g. "claude", "cloud").
     """
+    # ClaudeCodeCLIRuntime override: when PRAXIS_RUNTIME=claudecode (or auto-detected)
+    _runtime_env = os.environ.get("PRAXIS_RUNTIME", "").lower().strip()
+    _has_oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+    _has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if _runtime_env == "claudecode" or (not _runtime_env and _has_oauth and not _has_api_key):
+        _rt = ClaudeCodeCLIRuntime.from_env()
+        sys.stderr.write("[praxis] runtime: claudecode (claude -p subprocess)\n")
+        _runtimes: dict[str, Runtime] = {"claudecode": _rt}
+        return _rt, {}, _runtimes
+
     runtimes: dict[str, Runtime] = {}
 
     if conv.needs_claude():

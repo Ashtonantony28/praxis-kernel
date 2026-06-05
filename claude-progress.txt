@@ -248,3 +248,11 @@ Summary: Added temporary debug logging to _create_with_retry to surface the real
 Files changed: praxis/orchestrator.py, praxis/agents/loader.py, praxis/subagents.py, praxis/runtime/claude_code.py, tests/test_orchestrator.py, tests/test_main.py
 Next session should: The "sonnet" alias now maps to claude-haiku-4-5 — if the account is upgraded to a higher tier, update MODEL_MAP "sonnet" back to claude-sonnet-4-6 (or the latest sonnet) in both praxis/subagents.py and praxis/agents/loader.py, and update the orchestrator default. The 7 pre-existing orchestrator test failures referenced in Session 26 are now fixed (1387 pass). The tier restriction produces a 429 with message "Error" — the rate_limit_error handler now prints the request_id for investigation.
 ***
+--- Session 28: cli-runtime ---
+Date: 2026-06-05
+Feature: Add ClaudeCodeCLIRuntime — dispatch via claude -p subprocess
+Status: COMPLETE
+Summary: Added ClaudeCodeCLIRuntime to praxis/runtime/claude_code.py. The class implements the Runtime abstract interface and delegates run_loop/spawn_subagent to run() which shells out to claude -p with --output-format json. Added get_default_runtime() factory in __init__.py with PRAXIS_RUNTIME=claudecode selection (also auto-detects when OAuth present without API key). Updated queue_runner.py to detect and return ClaudeCodeCLIRuntime early. Added 10 tests in tests/test_cli_runtime.py — all passing, no real claude calls.
+Files changed: praxis/runtime/claude_code.py (ClaudeCodeCLIRuntime class, Path import), praxis/runtime/__init__.py (export + get_default_runtime factory), praxis/queue_runner.py (early return for claudecode runtime), .env.example (PRAXIS_RUNTIME and PRAXIS_TASK_TIMEOUT section), tests/test_cli_runtime.py (new, 10 tests)
+Next session should: If model tier is upgraded, update PRAXIS_RUNTIME to 'claude' (SDK) in .env and revert MODEL_MAP 'sonnet' alias from claude-haiku-4-5 back to claude-sonnet-4-6. ClaudeCodeCLIRuntime.run_loop() ignores system prompt and tool_schemas — any feature that relies on custom system prompt injection (e.g. semantic memory context) will need the prompt baked into user_message or the orchestrator adapted. get_default_runtime() is exported but not yet used by __main__.py — wire it there if needed.
+***

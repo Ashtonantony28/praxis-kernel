@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .base import Runtime, ToolExecutor
@@ -420,6 +421,112 @@ class ClaudeCodeRuntime(Runtime):
             if getattr(block, "type", None) == "text"
         ]
         return "\n".join(parts) if parts else ""
+
+
+class ClaudeCodeCLIRuntime(Runtime):
+    """Runtime that dispatches tasks via `claude -p` subprocess.
+
+    Eliminates OAuth token / model tier problems — Claude Code CLI handles
+    auth internally and uses whatever model the subscription allows.
+    """
+
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def from_env(cls) -> "ClaudeCodeCLIRuntime":
+        """Create runtime — no auth config needed (claude CLI handles auth)."""
+        return cls()
+
+    def run(self, prompt: str) -> str:
+        """Execute prompt via `claude -p` subprocess and return result text.
+
+        Raises:
+            RuntimeError: on non-zero exit code or JSON parse failure.
+        """
+        import json
+        import subprocess
+
+        workspace = os.environ.get("PRAXIS_WORKSPACE_ROOT", str(Path.cwd()))
+        timeout = int(os.environ.get("PRAXIS_TASK_TIMEOUT", "1800"))
+
+        cmd = [
+            "claude", "-p", prompt,
+            "--max-turns", "80",
+            "--dangerously-skip-permissions",
+            "--output-format", "json",
+            "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,Task",
+        ]
+
+        proc = subprocess.run(
+            cmd,
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"claude -p exited {proc.returncode}: {proc.stderr}"
+            )
+
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"claude -p returned invalid JSON: {proc.stdout!r}"
+            ) from exc
+
+        return str(data.get("result", ""))
+
+    # ── Runtime abstract method implementations ──────────────────────────
+
+    def run_loop(
+        self,
+        *,
+        model: str,
+        system: str,
+        user_message: str,
+        tool_schemas: list[dict[str, Any]],
+        tool_executor: ToolExecutor,
+        max_turns: int = 80,
+        mode: "Mode | None" = None,
+    ) -> str:
+        """Delegate to run() — claude -p handles model, tools, turns internally."""
+        return self.run(user_message)
+
+    def spawn_subagent(
+        self,
+        *,
+        model: str,
+        system: str,
+        prompt: str,
+        tool_schemas: list[dict[str, Any]],
+        tool_executor: ToolExecutor,
+        max_turns: int = 80,
+        mode: "Mode | None" = None,
+    ) -> str:
+        """Delegate to run() — claude -p handles subagent execution internally."""
+        return self.run(prompt)
+
+    def execute_tool(
+        self,
+        response_content: list[Any],
+        tool_executor: ToolExecutor,
+    ) -> list[dict[str, Any]]:
+        """No-op — claude -p handles tool execution internally."""
+        return []
+
+    def manage_context(
+        self,
+        messages: list[dict[str, Any]],
+        role: str,
+        content: Any,
+    ) -> list[dict[str, Any]]:
+        """No-op — claude -p manages its own context internally."""
+        messages.append({"role": role, "content": content})
+        return messages
 
 
 def _first_nonempty_line(text: str) -> str:
