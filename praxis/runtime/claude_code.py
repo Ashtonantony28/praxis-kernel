@@ -383,7 +383,19 @@ class ClaudeCodeRuntime(Runtime):
         for attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
             try:
                 return self.client.messages.create(**kwargs)
-            except anthropic.RateLimitError:
+            except anthropic.RateLimitError as _rl_exc:
+                # 429 rate_limit_error with empty message often means the account
+                # tier does not have access to the requested model. Surface the
+                # request_id so the user can investigate, then apply back-off.
+                _body = getattr(_rl_exc, "body", {}) or {}
+                _req_id = _body.get("request_id", "")
+                _err_msg = (_body.get("error") or {}).get("message", "")
+                if _err_msg in ("", "Error") and _req_id:
+                    print(
+                        f"[praxis] rate limited (possibly model tier restriction) "
+                        f"— request_id: {_req_id}",
+                        file=sys.stderr,
+                    )
                 if attempt >= RATE_LIMIT_MAX_RETRIES:
                     raise SystemExit(
                         "[praxis] fatal: rate limited by Anthropic API after "

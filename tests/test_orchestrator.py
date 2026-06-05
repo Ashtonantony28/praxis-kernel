@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from praxis.config import Config
 from praxis.orchestrator import Orchestrator
 from praxis.runtime import ClaudeCodeRuntime
@@ -13,6 +15,19 @@ from tests.conftest import (
     FakeTextBlock,
     FakeToolUseBlock,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_orchestrator_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent .env pollution from test_main.py leaking into orchestrator tests.
+
+    test_main.py calls main() which loads the real .env via _load_dotenv.
+    That can set PRAXIS_CONFIDENCE_THRESHOLD=0.7, causing orchestrator.run()
+    to spawn the planner subagent before the main loop, consuming FakeClient
+    responses the test didn't allocate for it.
+    """
+    monkeypatch.setenv("PRAXIS_CONFIDENCE_THRESHOLD", "0")
+    monkeypatch.delenv("PRAXIS_DEFAULT_MODE", raising=False)
 
 
 def test_orchestrator_init(config: Config, workspace: Path):

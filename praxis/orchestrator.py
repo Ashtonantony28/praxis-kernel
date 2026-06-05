@@ -57,7 +57,7 @@ class Orchestrator:
     def run(self, user_message: str, model: str | None = None, mode: "Mode | None" = None) -> str:
         """Run the orchestrator agent loop with the full system prompt."""
         import os
-        model = model or os.environ.get("PRAXIS_MODEL", "claude-sonnet-4-6")
+        model = model or os.environ.get("PRAXIS_MODEL", "claude-haiku-4-5")
 
         # Confidence gate: run planner check before spawning full agent loop.
         # Default is 0 (disabled — opt-in). Set PRAXIS_CONFIDENCE_THRESHOLD=0.7 to enable.

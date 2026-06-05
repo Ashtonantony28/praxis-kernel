@@ -138,6 +138,10 @@ def _mock_main_deps(tmp_path):
             return_value=(fake_rt, {}),
         ),
         "orch_cls": patch("praxis.__main__.Orchestrator", return_value=orch),
+        # Prevent _load_dotenv from injecting real .env values (e.g.
+        # PRAXIS_CONFIDENCE_THRESHOLD) into the process environment and
+        # polluting test_orchestrator.py tests that run after this fixture.
+        "load_dotenv": patch("praxis.__main__._load_dotenv", return_value=False),
     }
 
     started = {k: p.start() for k, p in patches.items()}
