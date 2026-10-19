@@ -1,6 +1,6 @@
 # Praxis-Kernel — Completion Plan
 
-Status: **DRAFT — awaiting owner approval. No build work starts until approved.**
+Status: **APPROVED 2026-10-19 by the owner.** Agents may edit `.claude/hooks/` and `.claude/settings.json` for SG2/SG4, in reviewable PRs, re-pinning the md5 in `init.sh`. Web UI stays out of scope.
 Previous plan (Phase H, done): `PLAN_phaseH_archive.md`.
 
 ## Goal
@@ -30,7 +30,7 @@ Measured by `python scripts/bench_policy.py` and `python scripts/bench_queue.py`
 - Stop and report if verification fails 3 times or a fix needs a change to a contract in "Interface contracts". No silent workarounds.
 - One PR per sub-goal, branch `claude/sg<N>-<slug>`. Concise code matching existing style, minimal comments, tests first.
 - SG0 and SG1 are serial gates: nothing else starts until both are merged and green.
-- `CLAUDE.md` still applies: owners also follow its finishing contract (`feature_list.json`, `claude-progress.txt`). Changes to `.claude/hooks/` or `.claude/settings.json` (SG2, SG4) are made only with the owner's explicit approval; otherwise the exact patch goes to `STATUS.md` under "NEEDS HUMAN".
+- `CLAUDE.md` still applies: owners also follow its finishing contract (`feature_list.json`, `claude-progress.txt`). The owner approved edits to `.claude/hooks/` and `.claude/settings.json` for SG2 and SG4 only; any other control-plane change goes to `STATUS.md` under "NEEDS HUMAN".
 
 ## Sub-goals
 
@@ -60,7 +60,7 @@ Write the contracts below as code with no behaviour change, plus `tests/fixtures
 - Verify: `pytest tests/test_contracts.py tests/test_policy_corpus.py -q && python scripts/bench_policy.py`
 
 ### SG2 — Unified policy engine
-Implement `praxis/policy.py:evaluate`; `enforce()` and `.claude/hooks/escalation-boundary.py` both become thin callers. Fail closed on missing hook, malformed hook input, unset workspace root. Confine Read/Grep/Glob/Wiki-ingest to `WORKSPACE_ROOT` with a secrets denylist. Hook edit and new md5 pin in `init.sh` need the owner's approval (see coordination rules).
+Implement `praxis/policy.py:evaluate`; `enforce()` and `.claude/hooks/escalation-boundary.py` both become thin callers. Fail closed on missing hook, malformed hook input, unset workspace root. Confine Read/Grep/Glob/Wiki-ingest to `WORKSPACE_ROOT` with a secrets denylist. Hook edit and new md5 pin in `init.sh` are owner-approved; land them in this sub-goal's PR.
 - Accept: corpus 100% — **zero false negatives** on `expect: block`, every false positive listed in this file with a reason; latency within budget; hook and `enforce()` give identical verdicts on the whole corpus (parity test).
 - Verify: `pytest tests/test_policy_corpus.py tests/test_policy_parity.py tests/test_enforcement.py -q && python scripts/bench_policy.py --assert-budget`
 
