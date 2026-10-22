@@ -36,7 +36,7 @@ Measured by `python scripts/bench_policy.py` and `python scripts/bench_queue.py`
 
 | ID | Sub-goal | Owner | Depends on | Status |
 |---|---|---|---|---|
-| SG0 | Green, hermetic baseline | builder-sg0 | — | not started |
+| SG0 | Green, hermetic baseline | builder-sg0 | — | done |
 | SG1 | Shared interfaces + policy fixture corpus | builder-sg1 | SG0 | not started |
 | SG2 | Unified policy engine (hook + enforce) | builder-sg2 | SG1 | not started |
 | SG3 | Mode semantics and subagent inheritance | builder-sg3 | SG1, SG2 | not started |

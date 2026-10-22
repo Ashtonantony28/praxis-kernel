@@ -324,6 +324,72 @@ class TestMCPResourceExposure:
             asyncio.run(test_read())
 
 
+class TestMCPRegisteredHandlers:
+    """Drive the handlers registered on the low-level Server (mcp>=2.3)."""
+
+    @staticmethod
+    def _call(server, method, params):
+        entry = server._mcp.get_request_handler(method)
+        assert entry is not None, method
+        parsed = None if params is None else entry.params_type.model_validate(params)
+        return asyncio.run(entry.handler(None, parsed))
+
+    def test_list_tools_exposes_all_schemas_verbatim(self, config):
+        server = MCPServer(config)
+        result = self._call(server, "tools/list", None)
+        by_name = {t.name: t for t in result.tools}
+        assert set(by_name) == set(server._all_schemas)
+        assert by_name["Bash"].input_schema == server._all_schemas["Bash"]["input_schema"]
+
+    def test_call_tool_unknown_is_error(self, config):
+        server = MCPServer(config)
+        result = self._call(server, "tools/call", {"name": "Nope", "arguments": {}})
+        assert result.is_error is True
+        assert "Unknown tool: Nope" in result.content[0].text
+
+    def test_call_tool_runs_hook_then_impl(self, config):
+        server = MCPServer(config)
+        impl = MagicMock(return_value="ok")
+        server._all_impls["Read"] = impl
+        with patch("praxis.mcp_server.run_pretool_hook") as hook:
+            hook.return_value = MagicMock(allowed=True)
+            result = self._call(
+                server, "tools/call", {"name": "Read", "arguments": {"file_path": "x"}}
+            )
+        hook.assert_called_once_with(config, "Read", {"file_path": "x"})
+        impl.assert_called_once_with({"file_path": "x"}, config)
+        assert result.content[0].text == "ok"
+
+    def test_call_tool_blocked_skips_impl(self, config):
+        server = MCPServer(config)
+        impl = MagicMock(return_value="ok")
+        server._all_impls["Bash"] = impl
+        with patch("praxis.mcp_server.run_pretool_hook") as hook:
+            hook.return_value = MagicMock(allowed=False, reason="nope")
+            result = self._call(
+                server, "tools/call", {"name": "Bash", "arguments": {"command": "ls"}}
+            )
+        impl.assert_not_called()
+        assert result.content[0].text.startswith("BLOCKED by §5")
+
+    def test_list_and_read_wiki_resources(self, config):
+        wiki_pages = config.workspace_root / "wiki" / "pages"
+        wiki_pages.mkdir(parents=True)
+        (wiki_pages / "alice.md").write_text("# Alice", encoding="utf-8")
+        server = MCPServer(config)
+        listed = self._call(server, "resources/list", None)
+        assert [str(r.uri) for r in listed.resources] == ["wiki://pages/alice"]
+        read = self._call(server, "resources/read", {"uri": "wiki://pages/alice"})
+        assert read.contents[0].text == "# Alice"
+        assert read.contents[0].mime_type == "text/markdown"
+
+    @pytest.mark.parametrize("uri", ["unknown://x", "wiki://pages/.hidden", "wiki://pages/a/b"])
+    def test_read_resource_rejects_bad_uri(self, config, uri):
+        server = MCPServer(config)
+        with pytest.raises(ValueError):
+            self._call(server, "resources/read", {"uri": uri})
+
+
 # ---------------------------------------------------------------------------
 # Class 6: TestMCPPortConfig
 # ---------------------------------------------------------------------------
