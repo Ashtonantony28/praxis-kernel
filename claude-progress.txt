@@ -274,3 +274,11 @@ Next session should: If needs_claude()/needs_cloud()/needs_local() helpers need 
   for claudecode in the all_runtimes map, review whether the queue_runner routing tests need
   updating. The claudecode runtime bypasses all convergence routing so this is unlikely.
 ***
+--- Session 30: sg0-hermetic ---
+Date: 2026-10-22
+Feature: SG0 — green, hermetic baseline (packaging, mcp 2.3 port, hermetic test env)
+Status: COMPLETE
+Summary: Fixed packaging (setuptools.build_meta, package discovery limited to praxis*) so pip install -e works, and pinned mcp>=2.3,<3. Ported praxis/mcp_server.py to the mcp 2.3 low-level API (handlers passed to the Server constructor as async (ctx, params) returning result models) and added tests that drive the registered handlers. Added an autouse conftest fixture pointing PRAXIS_WORKSPACE_ROOT/PRAXIS_MEMORY_ROOT at tmp_path, removed the numpy dependency from the memory-store mocks, and switched CI to install the extras without env vars; suite is 1405 pass / 0 fail on 3.11, 3.12 and 3.13.
+Files changed: pyproject.toml, praxis/mcp_server.py, tests/conftest.py, tests/test_mcp.py, tests/test_memory_store.py, .github/workflows/ci.yml, PLAN.md, claude-progress.txt
+Next session should: SG1 can start once this merges. Tests now always see PRAXIS_WORKSPACE_ROOT set (to tmp_path); tests for the "unset root" fail-closed path must monkeypatch.delenv it explicitly. The old TestMCPResourceExposure tests replay logic instead of calling handlers; TestMCPRegisteredHandlers is the real coverage. A pre-existing "coroutine TelegramAdapter.send_or_stage._send was never awaited" RuntimeWarning remains (telemetry/telegram tests).
+***

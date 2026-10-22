@@ -42,8 +42,7 @@ def _mock_st(embedding: list[float] | None = None) -> MagicMock:
         embedding = [0.1, 0.2, 0.3]
     mod = MagicMock()
     model = MagicMock()
-    import numpy as np  # numpy is available as a transitive dep
-    model.encode.return_value = np.array(embedding)
+    model.encode.return_value.tolist.return_value = list(embedding)
     mod.SentenceTransformer.return_value = model
     return mod
 

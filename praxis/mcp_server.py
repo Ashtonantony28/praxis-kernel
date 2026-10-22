@@ -22,10 +22,8 @@ from typing import Any, Callable
 try:
     import uvicorn
     from mcp.server.lowlevel.server import Server as MCPLowLevelServer
-    from mcp.server.lowlevel.helper_types import ReadResourceContents
     from mcp.server.sse import SseServerTransport
     from mcp import types as mcp_types
-    from pydantic import AnyUrl
     from starlette.applications import Starlette
     from starlette.requests import Request
     from starlette.responses import Response
@@ -65,87 +63,98 @@ class MCPServer:
             **TOOL_IMPLEMENTATIONS,
             **INTEGRATION_IMPLEMENTATIONS,
         }
-        self._mcp = MCPLowLevelServer(name="praxis-mcp")
-        self._register_tools()
-        self._register_resources()
+        self._mcp = MCPLowLevelServer(
+            "praxis-mcp",
+            on_list_tools=self._handle_list_tools,
+            on_call_tool=self._handle_call_tool,
+            on_list_resources=self._handle_list_resources,
+            on_read_resource=self._handle_read_resource,
+        )
 
-    def _register_tools(self) -> None:
-        """Register list_tools and call_tool handlers on the low-level server."""
-        all_schemas = self._all_schemas
-        all_impls = self._all_impls
-        make_handler = self._make_handler
-
-        @self._mcp.list_tools()
-        async def handle_list_tools() -> list[mcp_types.Tool]:
-            return [
+    async def _handle_list_tools(
+        self, ctx: Any, params: mcp_types.PaginatedRequestParams | None
+    ) -> mcp_types.ListToolsResult:
+        return mcp_types.ListToolsResult(
+            tools=[
                 mcp_types.Tool(
                     name=schema["name"],
                     description=schema.get("description", ""),
-                    inputSchema=schema["input_schema"],
+                    input_schema=schema["input_schema"],
                 )
-                for schema in all_schemas.values()
+                for schema in self._all_schemas.values()
             ]
+        )
 
-        @self._mcp.call_tool()
-        async def handle_call_tool(
-            name: str, arguments: dict[str, Any]
-        ) -> list[mcp_types.TextContent]:
-            impl_fn = all_impls.get(name)
-            if impl_fn is None:
-                return [
+    async def _handle_call_tool(
+        self, ctx: Any, params: mcp_types.CallToolRequestParams
+    ) -> mcp_types.CallToolResult:
+        name = params.name
+        impl_fn = self._all_impls.get(name)
+        if impl_fn is None:
+            return mcp_types.CallToolResult(
+                content=[
                     mcp_types.TextContent(
                         type="text", text=f"[praxis] Unknown tool: {name}"
                     )
-                ]
-            handler = make_handler(name, impl_fn)
-            # Run sync impl in thread pool to avoid blocking the event loop.
-            loop = asyncio.get_event_loop()
-            result: str = await loop.run_in_executor(
-                None, lambda: handler(**arguments)
+                ],
+                is_error=True,
             )
-            return [mcp_types.TextContent(type="text", text=result)]
+        handler = self._make_handler(name, impl_fn)
+        arguments = dict(params.arguments or {})
+        # Run sync impl in thread pool to avoid blocking the event loop.
+        result: str = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: handler(**arguments)
+        )
+        return mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text=result)]
+        )
 
-    def _register_resources(self) -> None:
+    def _wiki_pages_dir(self) -> Path:
+        return Path(self._config.workspace_root) / "wiki" / "pages"
+
+    async def _handle_list_resources(
+        self, ctx: Any, params: mcp_types.PaginatedRequestParams | None
+    ) -> mcp_types.ListResourcesResult:
         """Expose wiki/pages/ as read-only MCP resources at wiki://pages/{slug}."""
-        config = self._config
-
-        @self._mcp.list_resources()
-        async def handle_list_resources() -> list[mcp_types.Resource]:
-            wiki_pages_dir = Path(config.workspace_root) / "wiki" / "pages"
-            if not wiki_pages_dir.is_dir():
-                return []
-            return [
+        wiki_pages_dir = self._wiki_pages_dir()
+        if not wiki_pages_dir.is_dir():
+            return mcp_types.ListResourcesResult(resources=[])
+        return mcp_types.ListResourcesResult(
+            resources=[
                 mcp_types.Resource(
                     uri=f"wiki://pages/{md_file.stem}",
                     name=md_file.stem,
                     description=f"Wiki page: {md_file.stem}",
-                    mimeType="text/markdown",
+                    mime_type="text/markdown",
                 )
                 for md_file in sorted(wiki_pages_dir.glob("*.md"))
                 if not md_file.name.startswith(".")
             ]
+        )
 
-        @self._mcp.read_resource()
-        async def handle_read_resource(uri: AnyUrl) -> list[ReadResourceContents]:
-            uri_str = str(uri)
-            prefix = "wiki://pages/"
-            if not uri_str.startswith(prefix):
-                raise ValueError(f"[praxis] Unknown resource URI scheme: {uri_str}")
-            slug = uri_str[len(prefix):]
-            # Guard: slug must be safe (no path traversal)
-            if "/" in slug or "\\" in slug or slug.startswith("."):
-                raise ValueError(f"[praxis] Invalid resource slug: {slug!r}")
-            page_path = (
-                Path(config.workspace_root) / "wiki" / "pages" / f"{slug}.md"
-            )
-            if not page_path.exists():
-                raise FileNotFoundError(f"[praxis] Wiki page not found: {slug}")
-            return [
-                ReadResourceContents(
-                    content=page_path.read_text(encoding="utf-8"),
+    async def _handle_read_resource(
+        self, ctx: Any, params: mcp_types.ReadResourceRequestParams
+    ) -> mcp_types.ReadResourceResult:
+        uri_str = str(params.uri)
+        prefix = "wiki://pages/"
+        if not uri_str.startswith(prefix):
+            raise ValueError(f"[praxis] Unknown resource URI scheme: {uri_str}")
+        slug = uri_str[len(prefix):]
+        # Guard: slug must be safe (no path traversal)
+        if "/" in slug or "\\" in slug or slug.startswith("."):
+            raise ValueError(f"[praxis] Invalid resource slug: {slug!r}")
+        page_path = self._wiki_pages_dir() / f"{slug}.md"
+        if not page_path.exists():
+            raise FileNotFoundError(f"[praxis] Wiki page not found: {slug}")
+        return mcp_types.ReadResourceResult(
+            contents=[
+                mcp_types.TextResourceContents(
+                    uri=uri_str,
+                    text=page_path.read_text(encoding="utf-8"),
                     mime_type="text/markdown",
                 )
             ]
+        )
 
     def _make_handler(
         self, tool_name: str, impl_fn: Callable[[dict[str, Any], Config], str]

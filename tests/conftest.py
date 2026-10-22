@@ -14,6 +14,16 @@ from praxis.config import Config
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+# ---------- Hermetic environment ----------
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point workspace and memory roots at tmp_path so no test touches the real tree."""
+    monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("PRAXIS_MEMORY_ROOT", str(tmp_path / ".praxis" / "memory"))
+
+
 # ---------- Temp workspace ----------
 
 
