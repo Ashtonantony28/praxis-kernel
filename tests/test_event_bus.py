@@ -286,3 +286,189 @@ def test_singleton_preserves_subscriptions():
     assert q.get_nowait() == "singleton-payload"
     # Clean up to avoid leaking into other singleton tests
     b1.unsubscribe("singleton.test.event", q)
+
+
+# ===========================================================================
+# 6. Thread safety across loops (SG8)
+# ===========================================================================
+
+
+def test_publish_sync_from_thread_reaches_subscriber_on_running_loop(bus):
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    try:
+        async def _sub():
+            return bus.subscribe(TASK_COMPLETED)
+
+        q = asyncio.run_coroutine_threadsafe(_sub(), loop).result(2)
+        bus.publish_sync(TASK_COMPLETED, {"task_id": "x"})
+        got = asyncio.run_coroutine_threadsafe(asyncio.wait_for(q.get(), 2), loop).result(3)
+        assert got == {"task_id": "x"}
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        t.join(2)
+        loop.close()
+
+
+def test_publish_sync_inside_running_loop_delivers_immediately(bus):
+    async def _main():
+        q = bus.subscribe("*")
+        bus.publish_sync(TASK_STARTED, 1)
+        return q.get_nowait()
+
+    assert _run(_main()) == {"type": TASK_STARTED, "data": 1}
+
+
+# ===========================================================================
+# 7. Cross-process event log (.praxis/events.jsonl)
+# ===========================================================================
+
+import json
+from pathlib import Path
+
+import jsonschema
+
+from praxis.event_bus import EventLogTailer, enable_event_log, event_log_path
+
+_SCHEMA = json.loads(
+    (Path(__file__).resolve().parent.parent / "praxis" / "schemas" / "event.json").read_text()
+)
+
+
+def test_event_log_path(tmp_path):
+    assert event_log_path(tmp_path) == tmp_path / ".praxis" / "events.jsonl"
+
+
+def test_attach_log_writes_schema_valid_lines(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    bus.attach_log(path)
+    bus.publish_sync(TASK_COMPLETED, {"task_id": "t1"})
+    _run(bus.publish(TASK_FAILED, {"task_id": "t2"}))
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    for rec in lines:
+        jsonschema.validate(rec, _SCHEMA)
+    assert [(r["type"], r["data"]) for r in lines] == [
+        (TASK_COMPLETED, {"task_id": "t1"}),
+        (TASK_FAILED, {"task_id": "t2"}),
+    ]
+
+
+def test_detached_bus_writes_nothing(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    bus.attach_log(path)
+    bus.attach_log(None)
+    bus.publish_sync(TASK_COMPLETED, {})
+    assert not path.exists()
+
+
+def test_enable_event_log_attaches_singleton(tmp_path):
+    bus = get_event_bus()
+    try:
+        path = enable_event_log(tmp_path)
+        bus.publish_sync(TASK_QUEUED, {"task_id": "s"})
+        assert json.loads(path.read_text())["type"] == TASK_QUEUED
+    finally:
+        bus.attach_log(None)
+
+
+def _append(path, *records, raw=b""):
+    with open(path, "ab") as f:
+        for r in records:
+            f.write((json.dumps(r) + "\n").encode())
+        f.write(raw)
+
+
+def _ev(n):
+    return {"ts": "2026-01-01T00:00:00+00:00", "type": TASK_COMPLETED, "data": {"n": n}}
+
+
+def test_tailer_skips_history_and_reads_new_lines(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    _append(path, _ev(0))
+    tailer = EventLogTailer(path, bus)
+    assert tailer.poll() == []
+    _append(path, _ev(1), _ev(2))
+    assert [e["data"]["n"] for e in tailer.poll()] == [1, 2]
+    assert tailer.poll() == []
+
+
+def test_tailer_reads_file_created_after_start(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    tailer = EventLogTailer(path, bus)
+    assert tailer.poll() == []
+    _append(path, _ev(1))
+    assert [e["data"]["n"] for e in tailer.poll()] == [1]
+
+
+def test_tailer_buffers_partial_line(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    tailer = EventLogTailer(path, bus)
+    line = json.dumps(_ev(1)).encode()
+    _append(path, raw=line[:10])
+    assert tailer.poll() == []
+    _append(path, raw=line[10:] + b"\n")
+    assert [e["data"]["n"] for e in tailer.poll()] == [1]
+
+
+def test_tailer_skips_malformed_lines(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    tailer = EventLogTailer(path, bus)
+    _append(path, raw=b"not json\n[1]\n{\"type\": 5}\n")
+    _append(path, _ev(1))
+    assert [e["data"]["n"] for e in tailer.poll()] == [1]
+
+
+def test_tailer_handles_truncation(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    tailer = EventLogTailer(path, bus)
+    _append(path, _ev(1), _ev(2))
+    assert len(tailer.poll()) == 2
+    path.write_bytes(b"")
+    _append(path, _ev(3))
+    assert [e["data"]["n"] for e in tailer.poll()] == [3]
+
+
+def test_tailer_follows_writer_rotation(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    tailer = EventLogTailer(path, bus)
+    bus.attach_log(path, max_bytes=200)
+    for n in range(6):
+        bus.publish_sync(TASK_COMPLETED, {"n": n})
+    assert path.with_name("events.jsonl.1").exists()
+    assert path.stat().st_size <= 200
+    seen = [e["data"]["n"] for e in tailer.poll()]
+    assert seen[-1] == 5 and seen == sorted(seen)
+
+
+def test_tailer_drains_old_file_on_rotation(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+    path.touch()
+    tailer = EventLogTailer(path, bus)
+    _append(path, _ev(1))
+    path.rename(path.with_name("events.jsonl.1"))
+    _append(path, _ev(2))
+    assert [e["data"]["n"] for e in tailer.poll()] == [1, 2]
+
+
+def test_tailer_delivers_to_subscribers_without_echo(bus, tmp_path):
+    path = tmp_path / "events.jsonl"
+
+    async def _main():
+        q = bus.subscribe("*")
+        tailer = EventLogTailer(path, bus, interval=0.01)
+        bus.attach_log(path)
+        await tailer.start()
+        try:
+            _append(path, _ev(7))
+            got = await asyncio.wait_for(q.get(), 2)
+            bus.publish_sync(TASK_STARTED, {"local": True})  # tailing process: in-process only
+            local = await asyncio.wait_for(q.get(), 2)
+        finally:
+            await tailer.stop()
+        return got, local
+
+    got, local = _run(_main())
+    assert got == {"type": TASK_COMPLETED, "data": {"n": 7}}
+    assert local == {"type": TASK_STARTED, "data": {"local": True}}
+    assert len(path.read_text().splitlines()) == 1

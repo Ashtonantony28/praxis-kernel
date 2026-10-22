@@ -44,7 +44,7 @@ Measured by `python scripts/bench_policy.py` and `python scripts/bench_queue.py`
 | SG5 | Approval integrity | builder-sg5 | SG1 | done |
 | SG6 | Queue and daemon robustness | builder-sg6 | SG1 | done |
 | SG7 | Untrusted input channels and gateway auth | builder-sg7 | SG2, SG3 | done |
-| SG8 | Cross-process events and Telegram wiring | builder-sg8 | SG6 | not started |
+| SG8 | Cross-process events and Telegram wiring | builder-sg8 | SG6 | done |
 | SG9 | Docs match code | scribe-sg9 | SG2–SG8 | not started |
 
 Waves: SG0 → SG1 → {SG2, SG5, SG6} → {SG3, SG7, SG8} → SG4 → SG9 → audits.
@@ -178,5 +178,8 @@ _(owners append here)_
 - SG7/SG9: `tier_for` fails closed (unknown sender → BLOCKED), contradicting ARCHITECTURE.md's `PRAXIS_DEFAULT_TRUST` "user" default; owner to pick one, SG9 aligns docs.
 - SG7: `/sse` and `/messages` now return 401 unless `PRAXIS_UI_TOKEN` is set and sent as `Authorization: Bearer`; existing MCP client configs must add the header (SG9 docs). `/metrics` and `/dashboard` remain unauthenticated.
 - SG7: `Task.origin` is not yet mapped to `PolicyContext.origin` inside the orchestrator (runs use `"cli"`); `evaluate()` ignores origin today (SG2).
-- SG8: Telegram intake does not use `tier_for` yet. WhatsApp's legacy `allowed_numbers` counts as USER.
+- ~~SG8: Telegram intake does not use `tier_for` yet.~~ resolved in SG8: `on_message` uses `tier_for("telegram", sender)` (BLOCKED enqueues nothing) and sets `origin="telegram"`, `mode=mode_for(tier)`. WhatsApp's legacy `allowed_numbers` still counts as USER.
+- SG8/SG2: `convergence.yaml` `allowed_domains` is now unioned with `PRAXIS_ALLOWED_DOMAINS` (same as trust.py's env-then-file), so the shipped file allows `api.telegram.org`, and an agent that can write `convergence.yaml` in the workspace can widen egress (and trust ids). SG2 should block agent writes to `convergence.yaml` or make the env var authoritative.
+- SG8: `.praxis/events.jsonl` rotates at 10 MB to a single `.1` generation; the gateway tailer starts at end of file (no replay) and follows truncation/rotation, but a tailer more than one rotation behind loses events. Only `--queue` (and the daemon via it) writes the log; a process that tails it publishes in-process only.
+- SG8: Telegram reply routing is kept in `.praxis/queue/telegram_routes.json`; `--telegram-listen` must run for replies to be staged. Done results go through `send_or_stage` (staged unless the autonomy gate passes); failed tasks are always staged.
 - SG1: block corpus (≥ 200 `expect: block` cases) pending the owner; only the allow corpus (`tests/fixtures/policy/allow.jsonl`) has landed.

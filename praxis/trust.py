@@ -32,7 +32,7 @@ def _env_ids(name: str) -> set[str]:
     return {e.strip() for e in os.environ.get(name, "").split(",") if e.strip()}
 
 
-def _channel_config(channel: str) -> dict[str, Any]:
+def channel_config(channel: str) -> dict[str, Any]:
     root = os.environ.get("PRAXIS_WORKSPACE_ROOT")
     if not root:
         return {}
@@ -60,7 +60,7 @@ def tier_for(channel: str, sender_id: str) -> Tier:
         return Tier.OWNER
     if key in ids(_env_ids("PRAXIS_ADMIN_IDS")):
         return Tier.ADMIN
-    cfg = _channel_config(channel)
+    cfg = channel_config(channel)
     trust_ids = cfg.get("trust_ids") if isinstance(cfg.get("trust_ids"), dict) else {}
     for tier in (Tier.OWNER, Tier.ADMIN, Tier.USER):
         if sender in ids(trust_ids.get(tier.name.lower())):
