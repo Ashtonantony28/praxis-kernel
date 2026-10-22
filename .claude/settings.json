@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
-    "PRAXIS_WORKSPACE_ROOT": "/mnt/c/Users/Aiden Antony/Praxis_AgenticOSKernel",
-    "PRAXIS_MEMORY_ROOT": "/mnt/c/Users/Aiden Antony/Praxis_AgenticOSKernel/.praxis/memory"
+    "PRAXIS_WORKSPACE_ROOT": "/home/claude/praxis-kernel",
+    "PRAXIS_MEMORY_ROOT": "/home/claude/praxis-kernel/.praxis/memory"
   },
   "hooks": {
     "PreToolUse": [
