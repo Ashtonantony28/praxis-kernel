@@ -37,7 +37,7 @@ Measured by `python scripts/bench_policy.py` and `python scripts/bench_queue.py`
 | ID | Sub-goal | Owner | Depends on | Status |
 |---|---|---|---|---|
 | SG0 | Green, hermetic baseline | builder-sg0 | — | done |
-| SG1 | Shared interfaces + policy fixture corpus | builder-sg1 | SG0 | not started |
+| SG1 | Shared interfaces + policy fixture corpus | builder-sg1 | SG0 | partial: contracts merged, block corpus pending owner |
 | SG2 | Unified policy engine (hook + enforce) | builder-sg2 | SG1 | not started |
 | SG3 | Mode semantics and subagent inheritance | builder-sg3 | SG1, SG2 | not started |
 | SG4 | Governed Claude Code CLI runtime | builder-sg4 | SG2, SG3 | not started |
@@ -153,7 +153,7 @@ def tier_for(channel: str, sender_id: str) -> Tier: ...
 Data formats (JSON Schema in `praxis/schemas/`):
 - `staged_action.json`: `id, provider, action, params, queued_at, status (pending|approved|rejected|executed|failed), task_id, idempotency_key, _hmac`.
 - `task.json`: existing `Task` fields + `origin`, `mode`, `cost_budget_usd`.
-- `policy_case.json`: `{call: {name, input}, ctx: {mode, origin, allowed_domains}, expect: allow|block, rule}`.
+- `policy_case.json`: `{id, call: {name, input}, ctx: {mode, origin, allowed_domains}, expect: allow|block, rule, note?}` (`id` required, `note` optional).
 - `event.json`: `{ts, type, data}` one per line in `.praxis/events.jsonl`.
 
 ## Audits (after SG9; auditors are fresh subagents that wrote none of the code)
@@ -168,3 +168,6 @@ Findings are ranked by severity, each with a repro or failing test. Critical/hig
 
 ## Open issues
 _(owners append here)_
+- SG6: `TaskQueue` does not yet satisfy the `TaskStore` protocol (has `append`, lacks `claim`/`update`; uses `next_pending`/`update_status`); SG6 implements it.
+- SG7/SG9: `tier_for` fails closed (unknown sender → BLOCKED), contradicting ARCHITECTURE.md's `PRAXIS_DEFAULT_TRUST` "user" default; owner to pick one, SG9 aligns docs.
+- SG1: block corpus (≥ 200 `expect: block` cases) pending the owner; only the allow corpus (`tests/fixtures/policy/allow.jsonl`) has landed.

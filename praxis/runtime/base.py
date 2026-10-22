@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from praxis.modes.base import Mode
+    from praxis.policy import PolicyContext, ToolCall
 
-ToolExecutor = Callable[[str, dict[str, Any]], str]
+ToolExecutor = Callable[["ToolCall", "PolicyContext"], str]
+# Current runtime callback signature; call sites migrate to ToolExecutor in SG2/SG4.
+LegacyToolExecutor = Callable[[str, dict[str, Any]], str]
 
 
 class Runtime(ABC):
@@ -47,7 +50,7 @@ class Runtime(ABC):
         system: str,
         user_message: str,
         tool_schemas: list[dict[str, Any]],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
         max_turns: int = 50,
         mode: "Mode | None" = None,
     ) -> str:
@@ -77,7 +80,7 @@ class Runtime(ABC):
         system: str,
         prompt: str,
         tool_schemas: list[dict[str, Any]],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
         max_turns: int = 50,
     ) -> str:
         """Run a subagent session and return its text output.
@@ -90,7 +93,7 @@ class Runtime(ABC):
     def execute_tool(
         self,
         response_content: list[Any],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
     ) -> list[dict[str, Any]]:
         """Extract tool_use blocks from the response, execute each via
         tool_executor, and return formatted tool_result entries.

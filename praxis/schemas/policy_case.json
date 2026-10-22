@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "praxis/policy_case.json",
+  "title": "Labelled policy corpus case (tests/fixtures/policy/*.jsonl, one per line)",
+  "type": "object",
+  "required": ["id", "call", "ctx", "expect", "rule"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9_]+-[0-9]{3}$"},
+    "call": {
+      "type": "object",
+      "required": ["name", "input"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "input": {"type": "object"}
+      }
+    },
+    "ctx": {
+      "type": "object",
+      "required": ["mode", "origin", "allowed_domains"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": ["string", "null"]},
+        "origin": {"enum": ["cli", "queue", "slack", "email", "webhook", "mcp", "telegram", "whatsapp"]},
+        "allowed_domains": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "expect": {"enum": ["allow", "block"]},
+    "rule": {"type": "string", "pattern": "^[a-z]+(\\.[a-z_]+)?$"},
+    "note": {"type": "string"}
+  },
+  "if": {"properties": {"expect": {"const": "allow"}}},
+  "then": {"properties": {"rule": {"const": "allow"}}},
+  "else": {"properties": {"rule": {"not": {"const": "allow"}}}}
+}

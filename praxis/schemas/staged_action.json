@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "praxis/staged_action.json",
+  "title": "Staged external action (.praxis/staging/*.jsonl, one per line)",
+  "type": "object",
+  "required": ["id", "provider", "action", "params", "queued_at", "status"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "provider": {"type": "string", "minLength": 1},
+    "action": {"type": "string", "minLength": 1},
+    "params": {"type": "object"},
+    "queued_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["pending", "approved", "rejected", "executed", "failed"]},
+    "task_id": {"type": ["string", "null"]},
+    "idempotency_key": {"type": "string", "minLength": 1},
+    "_hmac": {"type": "string", "minLength": 1}
+  }
+}
