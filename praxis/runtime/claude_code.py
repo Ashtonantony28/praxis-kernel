@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .base import Runtime, ToolExecutor
+from .base import LegacyToolExecutor, Runtime
 from .cost import CostCircuitBreaker
 
 if TYPE_CHECKING:
@@ -92,7 +92,7 @@ class ClaudeCodeRuntime(Runtime):
         system: str,
         user_message: str,
         tool_schemas: list[dict[str, Any]],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
         max_turns: int = MAX_TURNS,
         mode: "Mode | None" = None,
     ) -> str:
@@ -163,7 +163,7 @@ class ClaudeCodeRuntime(Runtime):
         system: str,
         prompt: str,
         tool_schemas: list[dict[str, Any]],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
         max_turns: int = MAX_TURNS,
         mode: "Mode | None" = None,
     ) -> str:
@@ -180,7 +180,7 @@ class ClaudeCodeRuntime(Runtime):
     def execute_tool(
         self,
         response_content: list[Any],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
     ) -> list[dict[str, Any]]:
         import time as _time
         from datetime import datetime, timezone
@@ -489,7 +489,7 @@ class ClaudeCodeCLIRuntime(Runtime):
         system: str,
         user_message: str,
         tool_schemas: list[dict[str, Any]],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
         max_turns: int = 80,
         mode: "Mode | None" = None,
     ) -> str:
@@ -503,7 +503,7 @@ class ClaudeCodeCLIRuntime(Runtime):
         system: str,
         prompt: str,
         tool_schemas: list[dict[str, Any]],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
         max_turns: int = 80,
         mode: "Mode | None" = None,
     ) -> str:
@@ -513,7 +513,7 @@ class ClaudeCodeCLIRuntime(Runtime):
     def execute_tool(
         self,
         response_content: list[Any],
-        tool_executor: ToolExecutor,
+        tool_executor: LegacyToolExecutor,
     ) -> list[dict[str, Any]]:
         """No-op — claude -p handles tool execution internally."""
         return []

@@ -282,3 +282,11 @@ Summary: Fixed packaging (setuptools.build_meta, package discovery limited to pr
 Files changed: pyproject.toml, praxis/mcp_server.py, tests/conftest.py, tests/test_mcp.py, tests/test_memory_store.py, .github/workflows/ci.yml, PLAN.md, claude-progress.txt
 Next session should: SG1 can start once this merges. Tests now always see PRAXIS_WORKSPACE_ROOT set (to tmp_path); tests for the "unset root" fail-closed path must monkeypatch.delenv it explicitly. The old TestMCPResourceExposure tests replay logic instead of calling handlers; TestMCPRegisteredHandlers is the real coverage. A pre-existing "coroutine TelegramAdapter.send_or_stage._send was never awaited" RuntimeWarning remains (telemetry/telegram tests).
 ***
+--- Session 31: sg1-interfaces ---
+Date: 2026-10-22
+Feature: SG1 — shared interfaces + policy fixture corpus (non-corpus half + allow corpus)
+Status: PARTIAL
+Summary: Landed the SG1 contracts (praxis/policy.py, praxis/trust.py, praxis/schemas/*.json, Mode.permits/restrict, TaskStore protocol, ToolExecutor signature) with unit tests in tests/test_contracts.py. Added a 64-case must-allow corpus generated from tests/fixtures/policy/gen_allow.py, a corpus runner (tests/test_policy_corpus.py) with known_wrong.json xfail(strict) support, and scripts/bench_policy.py (p50/p99 vs 1 ms budget). The block/bypass corpus is pending the owner, so SG1 is not marked passing.
+Files changed: praxis/policy.py, praxis/trust.py, praxis/schemas/{event,policy_case,staged_action,task}.json, praxis/modes/base.py, praxis/queue.py, praxis/runtime/{base,claude_code,openai_base}.py, pyproject.toml, tests/test_contracts.py, tests/test_policy_corpus.py, tests/fixtures/policy/{gen_allow.py,allow.jsonl,known_wrong.json}, scripts/bench_policy.py, PLAN.md, claude-progress.txt
+Next session should: Add the block corpus as tests/fixtures/policy/block.jsonl (ids must match ^[a-z0-9_]+-[0-9]{3}$, "{workspace}" in inputs is substituted with the tmp root) once the owner approves it; list cases evaluate() gets wrong in known_wrong.json and add a block-count minimum to test_policy_corpus.py. Regenerate allow.jsonl via gen_allow.py rather than editing it. Runtimes still use LegacyToolExecutor; TaskQueue does not satisfy TaskStore yet (SG6); tier_for fails closed vs ARCHITECTURE.md's "user" default (SG7/SG9).
+***

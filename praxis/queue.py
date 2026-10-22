@@ -7,7 +7,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 
 @dataclass
@@ -42,6 +42,12 @@ class Task:
             priority=priority,
             stages=stages,
         )
+
+
+class TaskStore(Protocol):
+    def append(self, task: Task) -> None: ...
+    def claim(self) -> Task | None: ...  # atomically pending -> running
+    def update(self, task_id: str, **fields: Any) -> None: ...
 
 
 class TaskQueue:

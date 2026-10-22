@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "praxis/event.json",
+  "title": "Event (.praxis/events.jsonl, one per line)",
+  "type": "object",
+  "required": ["ts", "type", "data"],
+  "properties": {
+    "ts": {"type": "string", "format": "date-time"},
+    "type": {"type": "string", "minLength": 1},
+    "data": {}
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "praxis/task.json",
+  "title": "Queue task (.praxis/queue/tasks.jsonl, one per line)",
+  "type": "object",
+  "required": ["id", "prompt", "priority", "status", "created_at"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "prompt": {"type": "string"},
+    "priority": {"type": "integer"},
+    "status": {"enum": ["pending", "running", "done", "failed"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "started_at": {"type": ["string", "null"]},
+    "completed_at": {"type": ["string", "null"]},
+    "result": {"type": ["string", "null"]},
+    "error": {"type": ["string", "null"]},
+    "stages": {"type": ["array", "null"], "items": {"type": "string"}},
+    "origin": {"enum": ["cli", "queue", "slack", "email", "webhook", "mcp", "telegram", "whatsapp"]},
+    "mode": {"type": ["string", "null"]},
+    "cost_budget_usd": {"type": ["number", "null"], "minimum": 0}
+  }
+}
