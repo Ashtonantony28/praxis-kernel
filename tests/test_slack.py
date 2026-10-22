@@ -319,6 +319,11 @@ class TestSlackListener:
             queue=queue,
         )
 
+    @pytest.fixture(autouse=True)
+    def _trusted(self, monkeypatch):
+        monkeypatch.setenv("PRAXIS_OWNER_IDS", "slack:U123,slack:U456")
+        monkeypatch.setenv("PRAXIS_ADMIN_IDS", "slack:U789")
+
     def test_dm_message_enqueues_task(self, listener):
         listener._handle_message(
             {"text": "run tests", "user": "U123", "channel_type": "im"}
@@ -390,6 +395,44 @@ class TestSlackListener:
         )
         with pytest.raises(RuntimeError):
             listener.start()
+
+    def test_unknown_user_dm_enqueues_nothing(self, listener, capsys):
+        listener._handle_message({"text": "secret plan", "user": "UNKNOWN", "channel_type": "im"})
+        listener._queue.append.assert_not_called()
+        err = capsys.readouterr().err
+        assert "secret plan" not in err and err.count("\n") <= 1
+
+    @patch("praxis.slack_listener.urllib.request.urlopen")
+    def test_unknown_user_slash_command_enqueues_nothing(self, mock_urlopen, listener, capsys):
+        listener._handle_slash_command(
+            {"command": "/praxis", "text": "rm it", "user_id": "UNKNOWN", "response_url": "https://hooks.slack.com/x"}
+        )
+        listener._queue.append.assert_not_called()
+        mock_urlopen.assert_not_called()
+        assert "rm it" not in capsys.readouterr().err
+
+    def test_owner_dm_runs_unrestricted_with_origin(self, listener):
+        listener._handle_message({"text": "go", "user": "U123", "channel_type": "im"})
+        task = listener._queue.append.call_args[0][0]
+        assert task.origin == "slack" and task.mode is None
+
+    def test_user_tier_dm_runs_in_plan_mode(self, listener, tmp_path):
+        (tmp_path / "convergence.yaml").write_text("channels:\n  slack:\n    trusted_contacts: [U555]\n")
+        listener._handle_message({"text": "go", "user": "U555", "channel_type": "im"})
+        task = listener._queue.append.call_args[0][0]
+        assert task.origin == "slack" and task.mode == "plan"
+
+    def test_non_admin_block_action_ignored(self, listener, tmp_path):
+        approvals_dir = tmp_path / ".praxis" / "staging" / "slack" / "approvals"
+        approvals_dir.mkdir(parents=True)
+        f = approvals_dir / "a1.json"
+        f.write_text(json.dumps({"id": "a1", "status": "pending", "responded_at": None}))
+        (tmp_path / "convergence.yaml").write_text("channels:\n  slack:\n    trusted_contacts: [U555]\n")
+        for uid in ("UNKNOWN", "U555"):
+            listener._handle_block_action(
+                {"actions": [{"action_id": "approval_a1", "value": "approve"}], "user": {"id": uid}}
+            )
+        assert json.loads(f.read_text())["status"] == "pending"
 
     def test_empty_dm_not_enqueued(self, listener):
         listener._handle_message({"text": "   ", "user": "U123", "channel_type": "im"})

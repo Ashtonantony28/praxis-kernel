@@ -43,7 +43,7 @@ Measured by `python scripts/bench_policy.py` and `python scripts/bench_queue.py`
 | SG4 | Governed Claude Code CLI runtime | builder-sg4 | SG2, SG3 | not started |
 | SG5 | Approval integrity | builder-sg5 | SG1 | done |
 | SG6 | Queue and daemon robustness | builder-sg6 | SG1 | done |
-| SG7 | Untrusted input channels and gateway auth | builder-sg7 | SG2, SG3 | not started |
+| SG7 | Untrusted input channels and gateway auth | builder-sg7 | SG2, SG3 | done |
 | SG8 | Cross-process events and Telegram wiring | builder-sg8 | SG6 | not started |
 | SG9 | Docs match code | scribe-sg9 | SG2–SG8 | not started |
 
@@ -170,10 +170,13 @@ Findings are ranked by severity, each with a repro or failing test. Critical/hig
 _(owners append here)_
 - ~~SG6: `TaskQueue` does not yet satisfy the `TaskStore` protocol~~ resolved in SG6: `append`/`claim`/`update` over an fcntl-locked append-only log with atomic-rename compaction; `next_pending`/`update_status` remain as wrappers.
 - SG6: `PRAXIS_MAX_CONCURRENT_TASKS` removed (loop was synchronous; a pool would need per-worker runtimes and cost breakers). Tasks run one at a time.
-- SG3: `Task.mode` is stored and loaded but the runner does not yet pass it to `orch.run(mode=...)`.
-- SG7: `Task.origin` defaults to `"queue"`; Slack/webhook/API producers do not set it yet.
+- ~~SG3: `Task.mode` is stored and loaded but the runner does not yet pass it to `orch.run(mode=...)`.~~ resolved in SG7: the runner passes `Mode.load(task.mode)` to `orch.run(mode=...)` (atomic and staged); an unknown mode fails the task.
+- ~~SG7: `Task.origin` defaults to `"queue"`; Slack/webhook/API producers do not set it yet.~~ resolved in SG7: Slack, email ambient, webhook and WhatsApp set `origin`; `POST /api/queue`, scheduler, file watcher and the calendar/Linear/GitHub ambient pollers keep `"queue"`.
 - SG4: `ClaudeCodeCLIRuntime` has no cost breaker and runs tools in a subprocess, so per-task budgets and the staging task scope (contextvar) do not reach it.
 - SG6: email/calendar/Slack draft sidecars do not go through `stage_action`, so retries can duplicate them.
 - AUDIT-2: a fresh `TaskQueue` instance loads 10k tasks in ~80 ms and compaction takes ~115 ms (amortised over >= max(1000, n) writes); both are outside the warm `claim()`/`update()` budget.
 - SG7/SG9: `tier_for` fails closed (unknown sender → BLOCKED), contradicting ARCHITECTURE.md's `PRAXIS_DEFAULT_TRUST` "user" default; owner to pick one, SG9 aligns docs.
+- SG7: `/sse` and `/messages` now return 401 unless `PRAXIS_UI_TOKEN` is set and sent as `Authorization: Bearer`; existing MCP client configs must add the header (SG9 docs). `/metrics` and `/dashboard` remain unauthenticated.
+- SG7: `Task.origin` is not yet mapped to `PolicyContext.origin` inside the orchestrator (runs use `"cli"`); `evaluate()` ignores origin today (SG2).
+- SG8: Telegram intake does not use `tier_for` yet. WhatsApp's legacy `allowed_numbers` counts as USER.
 - SG1: block corpus (≥ 200 `expect: block` cases) pending the owner; only the allow corpus (`tests/fixtures/policy/allow.jsonl`) has landed.

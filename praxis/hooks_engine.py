@@ -13,6 +13,7 @@ Optional dependency: watchdog>=3.0  (pip install praxis[hooks])
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -206,6 +207,7 @@ def make_webhook_routes() -> list:
 
         # Optional HMAC-SHA256 validation
         secret = os.environ.get(f"PRAXIS_WEBHOOK_SECRET_{source.upper()}", "")
+        signed = False
         if secret:
             sig_header = request.headers.get("X-Hub-Signature-256", "")
             expected = "sha256=" + _hmac.new(
@@ -213,6 +215,7 @@ def make_webhook_routes() -> list:
             ).hexdigest()
             if not _hmac.compare_digest(sig_header, expected):
                 return _JSONResponse({"error": "invalid signature"}, status_code=401)
+            signed = True
 
         # Parse JSON body
         try:
@@ -226,11 +229,19 @@ def make_webhook_routes() -> list:
         if not workspace:
             return _JSONResponse({"error": "PRAXIS_WORKSPACE_ROOT not set"}, status_code=500)
 
+        # Trust: a verified signature makes the source at least USER; otherwise tier_for.
+        from .trust import Tier, tier_for
+
+        if not signed and tier_for("webhook", source) is Tier.BLOCKED:
+            sys.stderr.write("[praxis] webhook from untrusted source ignored\n")
+            return _JSONResponse({"error": "untrusted source"}, status_code=403)
+
         from .queue import Task, TaskQueue  # local import
 
         queue = TaskQueue(Path(workspace) / ".praxis" / "queue")
         prompt = f"Webhook from {source}: {json_str[:500]}"
-        task = Task.create(prompt=prompt, priority=5)
+        # Webhook payloads are third-party content: always plan mode.
+        task = Task.create(prompt=prompt, priority=5, origin="webhook", mode="plan")
         queue.append(task)
 
         return _JSONResponse({"task_id": task.id}, status_code=201)

@@ -223,8 +223,13 @@ class WhatsAppAdapter:
                 )
                 return
 
-        # Allowed-numbers filter
-        if from_number not in self._allowed_numbers:
+        # Trust: tier_for, with the legacy allowed_numbers list counting as USER
+        from ..trust import Tier, mode_for, tier_for
+
+        tier = tier_for("whatsapp", from_number)
+        if tier is Tier.BLOCKED and from_number in self._allowed_numbers:
+            tier = Tier.USER
+        if tier is Tier.BLOCKED:
             logger.debug(
                 "WhatsApp message from non-allowed number %s — ignored",
                 _redact_secrets(from_number),
@@ -237,6 +242,8 @@ class WhatsAppAdapter:
         task = Task.create(
             prompt=f"[whatsapp] from={from_number}: {message}",
             priority=0,
+            origin="whatsapp",
+            mode=mode_for(tier),
         )
         self._queue.append(task)
         logger.debug("WhatsApp task enqueued: %s", task.id)

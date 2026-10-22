@@ -118,6 +118,19 @@ class TestOnEvent:
             adapter.on_event({"from": "+1234567890", "message": "hello world"})
         queue.append.assert_called_once_with(mock_task)
 
+    def test_allowed_number_is_user_tier_plan_mode(self, tmp_path: Path):
+        adapter, queue = _make_adapter(tmp_path, allowed_numbers=["+1234567890"])
+        adapter.on_event({"from": "+1234567890", "message": "hello"})
+        task = queue.append.call_args[0][0]
+        assert task.origin == "whatsapp" and task.mode == "plan"
+
+    def test_owner_number_unrestricted(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("PRAXIS_OWNER_IDS", "whatsapp:+1555")
+        adapter, queue = _make_adapter(tmp_path, allowed_numbers=["+1234567890"])
+        adapter.on_event({"from": "+1555", "message": "hello"})
+        task = queue.append.call_args[0][0]
+        assert task.origin == "whatsapp" and task.mode is None
+
     def test_non_allowed_number_dropped(self, tmp_path: Path):
         """on_event from a number NOT in allowed_numbers does NOT enqueue a task."""
         adapter, queue = _make_adapter(tmp_path, allowed_numbers=["+1234567890"])

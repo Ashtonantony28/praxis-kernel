@@ -4,6 +4,7 @@ Resolution: the local CLI is OWNER; otherwise env PRAXIS_OWNER_IDS /
 PRAXIS_ADMIN_IDS ("channel:sender" entries, comma-separated), then
 convergence.yaml channels.<channel>.trust_ids.{owner,admin,user}, then
 channels.<channel>.trusted_contacts (USER). Anything else is BLOCKED.
+Email addresses compare case-insensitively. Non-OWNER tasks run in plan mode.
 """
 
 from __future__ import annotations
@@ -44,21 +45,31 @@ def _channel_config(channel: str) -> dict[str, Any]:
 
 
 def tier_for(channel: str, sender_id: str) -> Tier:
-    sender = str(sender_id).strip()
+    norm = str.lower if channel == "email" else (lambda v: v)
+    sender = norm(str(sender_id).strip())
     if channel not in CHANNELS or not sender:
         return Tier.BLOCKED
     if channel == "cli":
         return Tier.OWNER
+
+    def ids(raw: Any) -> set[str]:
+        return {norm(str(i).strip()) for i in raw or []}
+
     key = f"{channel}:{sender}"
-    if key in _env_ids("PRAXIS_OWNER_IDS"):
+    if key in ids(_env_ids("PRAXIS_OWNER_IDS")):
         return Tier.OWNER
-    if key in _env_ids("PRAXIS_ADMIN_IDS"):
+    if key in ids(_env_ids("PRAXIS_ADMIN_IDS")):
         return Tier.ADMIN
     cfg = _channel_config(channel)
     trust_ids = cfg.get("trust_ids") if isinstance(cfg.get("trust_ids"), dict) else {}
     for tier in (Tier.OWNER, Tier.ADMIN, Tier.USER):
-        if sender in {str(i).strip() for i in trust_ids.get(tier.name.lower()) or []}:
+        if sender in ids(trust_ids.get(tier.name.lower())):
             return tier
-    if sender in {str(i).strip() for i in cfg.get("trusted_contacts") or []}:
+    if sender in ids(cfg.get("trusted_contacts")):
         return Tier.USER
     return Tier.BLOCKED
+
+
+def mode_for(tier: Tier) -> str | None:
+    """Task mode for a sender tier: only OWNER tasks run unrestricted."""
+    return None if tier is Tier.OWNER else "plan"
