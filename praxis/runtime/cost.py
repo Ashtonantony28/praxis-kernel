@@ -23,6 +23,13 @@ _DEFAULT_PRICING: tuple[float, float] = (1.00, 3.00)
 _DEFAULT_MAX_COST: float = 2.00
 
 
+class CostBudgetExceeded(SystemExit):
+    """Raised (exit code 3) when the breaker trips; the queue runner fails only the current task."""
+
+    def __str__(self) -> str:
+        return "cost budget exceeded"
+
+
 class CostCircuitBreaker:
     """Tracks per-session API cost and trips sys.exit(3) if cap exceeded.
 
@@ -103,4 +110,4 @@ class CostCircuitBreaker:
             f"cap ${self.max_cost:.2f}. Execution trace: {trace_msg}\n"
             "Raise PRAXIS_MAX_SESSION_COST or investigate the trace to resume.\n"
         )
-        sys.exit(3)
+        raise CostBudgetExceeded(3)

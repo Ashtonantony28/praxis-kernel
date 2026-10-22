@@ -247,21 +247,9 @@ class MCPServer:
             queue_running = 0
             queue_error = None
             try:
-                tasks_file = workspace / ".praxis" / "queue" / "tasks.jsonl"
-                if tasks_file.exists():
-                    for raw_line in tasks_file.read_text(encoding="utf-8").splitlines():
-                        raw_line = raw_line.strip()
-                        if not raw_line:
-                            continue
-                        try:
-                            task_obj = _json.loads(raw_line)
-                            status = task_obj.get("status", "")
-                            if status == "pending":
-                                queue_pending += 1
-                            elif status == "running":
-                                queue_running += 1
-                        except Exception:
-                            pass
+                from .queue import TaskQueue as _TaskQueue
+                _stats = _TaskQueue(workspace / ".praxis" / "queue").stats()
+                queue_pending, queue_running = _stats["pending"], _stats["running"]
             except Exception as exc:
                 queue_error = str(exc)
 

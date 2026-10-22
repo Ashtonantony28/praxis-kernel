@@ -213,3 +213,95 @@ def test_ensure_dirs(tmp_path: Path):
     q.ensure_dirs()
     assert queue_dir.exists()
     assert q.results_dir.exists()
+
+
+# ---------- TaskStore protocol (SG6) ----------
+
+
+def test_task_new_fields_defaults_and_legacy_load():
+    t = Task.create("x", origin="slack", mode="plan", cost_budget_usd=0.5)
+    assert (t.origin, t.mode, t.cost_budget_usd) == ("slack", "plan", 0.5)
+    legacy = Task.from_dict({"id": "a", "prompt": "p", "status": "pending"})
+    assert (legacy.origin, legacy.mode, legacy.cost_budget_usd) == ("queue", None, None)
+
+
+def test_legacy_file_without_new_fields_loads(queue: TaskQueue, queue_dir: Path):
+    queue_dir.joinpath("tasks.jsonl").write_text(
+        json.dumps({"id": "old1", "prompt": "p", "priority": 0, "status": "pending", "created_at": "2026-01-01"}) + "\n"
+    )
+    t = queue.claim()
+    assert t.id == "old1" and t.origin == "queue" and t.cost_budget_usd is None
+
+
+def test_queue_satisfies_task_store():
+    from praxis.queue import TaskStore
+
+    def needs_store(s: TaskStore) -> None: ...
+
+    for name in ("append", "claim", "update"):
+        assert callable(getattr(TaskQueue, name))
+    needs_store(TaskQueue(Path("/nonexistent")))
+
+
+def test_claim_orders_and_marks_running(queue: TaskQueue):
+    low = Task.create("low", priority=5)
+    high = Task.create("high", priority=1)
+    queue.append(low)
+    queue.append(high)
+    first = queue.claim()
+    assert first.id == high.id and first.status == "running" and first.started_at
+    assert queue.claim().id == low.id
+    assert queue.claim() is None
+    assert queue.stats()["running"] == 2
+
+
+def test_claim_empty_and_no_file(queue_dir: Path):
+    assert TaskQueue(queue_dir / "missing").claim() is None
+
+
+def test_update_fields(queue: TaskQueue):
+    t = Task.create("u")
+    queue.append(t)
+    queue.update(t.id, status="done", result="ok")
+    got = queue._read_all()[0]
+    assert (got.status, got.result) == ("done", "ok") and got.completed_at
+
+
+def test_update_rejects_unknown_field(queue: TaskQueue):
+    t = Task.create("u")
+    queue.append(t)
+    with pytest.raises(ValueError):
+        queue.update(t.id, bogus=1)
+
+
+def test_update_back_to_pending_is_claimable_again(queue: TaskQueue):
+    t = Task.create("again")
+    queue.append(t)
+    assert queue.claim().id == t.id
+    queue.update(t.id, status="pending")
+    assert queue.claim().id == t.id
+
+
+def test_two_instances_see_each_others_writes(queue_dir: Path):
+    a, b = TaskQueue(queue_dir), TaskQueue(queue_dir)
+    t = Task.create("shared")
+    a.append(t)
+    assert b.claim().id == t.id
+    assert a.claim() is None
+    b.update(t.id, status="done")
+    assert a.stats()["done"] == 1
+
+
+def test_compaction_keeps_one_line_per_task(queue: TaskQueue, queue_dir: Path):
+    ids = []
+    for i in range(5):
+        t = Task.create(f"t{i}")
+        queue.append(t)
+        ids.append(t.id)
+    for _ in range(3):
+        for i in ids:
+            queue.update(i, result="r")
+    queue.compact()
+    lines = queue_dir.joinpath("tasks.jsonl").read_text().splitlines()
+    assert [json.loads(line)["id"] for line in lines] == ids
+    assert TaskQueue(queue_dir).stats()["pending"] == 5

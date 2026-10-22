@@ -275,7 +275,11 @@ class TestQueueRunnerTaskTypeRouting:
                 config=config,
             )
             # New Orchestrator created with cloud_rt
-            MockOrch.assert_called_once_with(cloud_rt, config)
+            MockOrch.assert_called_once_with(
+                cloud_rt, config,
+                runtime_overrides=mock_orch.runtime_overrides,
+                agent_modes=mock_orch.agent_modes,
+            )
         # The new orchestrator's run was used
         new_orch.run.assert_called_once()
         mock_orch.run.assert_not_called()

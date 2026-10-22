@@ -12,6 +12,8 @@ import hmac
 import json
 import os
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,21 @@ from typing import Any
 STAGING_FILENAME = "external_actions.jsonl"
 HMAC_ENV = "PRAXIS_STAGING_HMAC_KEY"
 _DEDUPE_STATUSES = frozenset({"pending", "approved", "executed"})
+_current_task: ContextVar[str | None] = ContextVar("praxis_task_id", default=None)
+
+
+def current_task_id() -> str | None:
+    """Id of the queue task currently running in this context, if any."""
+    return _current_task.get()
+
+
+@contextmanager
+def task_scope(task_id: str | None):
+    token = _current_task.set(task_id)
+    try:
+        yield
+    finally:
+        _current_task.reset(token)
 
 
 def _canonical(obj: Any) -> str:
