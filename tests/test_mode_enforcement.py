@@ -21,6 +21,8 @@ from praxis.runtime.openai_base import OpenAIBaseRuntime
 from praxis.runtime.local import LocalRuntime
 from praxis.modes.plan import MODE as plan_mode
 from praxis.modes.build import MODE as build_mode
+from praxis.modes.base import Mode
+from praxis.policy import PolicyContext, ToolCall
 
 from tests.conftest import FakeToolUseBlock
 
@@ -153,21 +155,12 @@ class TestCrossRuntimeModeEnforcement:
     # Routing helpers — each runtime uses a different call format
     # ------------------------------------------------------------------
 
-    def _run_claude(self, runtime: ClaudeCodeRuntime, name: str, input_dict: dict, tool_executor):
-        block = FakeToolUseBlock(id="call-1", name=name, input=input_dict)
-        return runtime.execute_tool([block], tool_executor)
-
-    def _run_openai(self, runtime, name: str, input_dict: dict, tool_executor):
-        tc = FakeToolCall(
-            id="call-1",
-            function=FakeFunction(name=name, arguments=json.dumps(input_dict)),
-        )
-        return runtime.execute_tool([tc], tool_executor)
-
-    def _run(self, runtime, name: str, input_dict: dict, tool_executor):
+    def _run(self, runtime, name: str, input_dict: dict, tool_executor, mode=None):
         if isinstance(runtime, ClaudeCodeRuntime):
-            return self._run_claude(runtime, name, input_dict, tool_executor)
-        return self._run_openai(runtime, name, input_dict, tool_executor)
+            call = FakeToolUseBlock(id="call-1", name=name, input=input_dict)
+        else:
+            call = FakeToolCall(id="call-1", function=FakeFunction(name=name, arguments=json.dumps(input_dict)))
+        return runtime.execute_tool([call], tool_executor, mode=mode)
 
     # ------------------------------------------------------------------
     # Assertion helpers
@@ -187,12 +180,11 @@ class TestCrossRuntimeModeEnforcement:
         monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
         monkeypatch.setenv("PRAXIS_ALLOWED_DOMAINS", "")
         runtime = make_runtime(tmp_path)
-        runtime._current_mode = plan_mode
         tool_executor = MagicMock(return_value="ok")
 
         good_path = str(tmp_path / "file.txt")
         results = self._run(
-            runtime, "Write", {"file_path": good_path, "content": "data"}, tool_executor
+            runtime, "Write", {"file_path": good_path, "content": "data"}, tool_executor, plan_mode
         )
 
         assert self._is_blocked(results), f"Expected BLOCKED, got: {results}"
@@ -208,11 +200,10 @@ class TestCrossRuntimeModeEnforcement:
         monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
         monkeypatch.setenv("PRAXIS_ALLOWED_DOMAINS", "")
         runtime = make_runtime(tmp_path)
-        runtime._current_mode = plan_mode
         tool_executor = MagicMock(return_value="ok")
 
         results = self._run(
-            runtime, "Bash", {"command": "echo hi"}, tool_executor
+            runtime, "Bash", {"command": "echo hi"}, tool_executor, plan_mode
         )
 
         assert self._is_blocked(results), f"Expected BLOCKED, got: {results}"
@@ -228,11 +219,10 @@ class TestCrossRuntimeModeEnforcement:
         monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
         monkeypatch.setenv("PRAXIS_ALLOWED_DOMAINS", "")
         runtime = make_runtime(tmp_path)
-        runtime._current_mode = plan_mode
         tool_executor = MagicMock(return_value="file contents")
 
         results = self._run(
-            runtime, "Read", {"file_path": str(tmp_path / "x.txt")}, tool_executor
+            runtime, "Read", {"file_path": str(tmp_path / "x.txt")}, tool_executor, plan_mode
         )
 
         tool_executor.assert_called_once()
@@ -248,13 +238,73 @@ class TestCrossRuntimeModeEnforcement:
         monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
         monkeypatch.setenv("PRAXIS_ALLOWED_DOMAINS", "")
         runtime = make_runtime(tmp_path)
-        runtime._current_mode = build_mode
         tool_executor = MagicMock(return_value="written")
 
         good_path = str(tmp_path / "output.txt")
         results = self._run(
-            runtime, "Write", {"file_path": good_path, "content": "data"}, tool_executor
+            runtime, "Write", {"file_path": good_path, "content": "data"}, tool_executor, build_mode
         )
 
         tool_executor.assert_called_once()
         assert not self._is_blocked(results), f"Expected allowed, got BLOCKED: {results}"
+
+    # ------------------------------------------------------------------
+    # SG3 — tool:action entries, allowed_tools, executor contract
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("make_runtime", RUNTIME_FACTORIES)
+    @pytest.mark.parametrize("name,action", [
+        ("linear", "create_issue"), ("notion", "append_block"), ("Email", "draft_email"),
+        ("Calendar", "propose_event"), ("Wiki", "ingest"), ("Slack", "notify"),
+    ])
+    def test_plan_mode_blocks_integration_write_action(self, make_runtime, name, action, tmp_path):
+        runtime = make_runtime(tmp_path)
+        tool_executor = MagicMock(return_value="staged")
+        results = self._run(runtime, name, {"action": action}, tool_executor, plan_mode)
+        assert self._is_blocked(results)
+        tool_executor.assert_not_called()
+
+    @pytest.mark.parametrize("make_runtime", RUNTIME_FACTORIES)
+    def test_plan_mode_allows_integration_read_action(self, make_runtime, tmp_path):
+        runtime = make_runtime(tmp_path)
+        tool_executor = MagicMock(return_value="issues")
+        results = self._run(runtime, "linear", {"action": "list_issues"}, tool_executor, plan_mode)
+        assert not self._is_blocked(results)
+        tool_executor.assert_called_once()
+
+    @pytest.mark.parametrize("make_runtime", RUNTIME_FACTORIES)
+    def test_allowed_tools_enforced(self, make_runtime, tmp_path):
+        runtime = make_runtime(tmp_path)
+        mode = Mode(name="ro", allowed_tools=frozenset({"Read", "notion:search"}))
+        tool_executor = MagicMock(return_value="ok")
+        assert self._is_blocked(self._run(runtime, "Grep", {"pattern": "x"}, tool_executor, mode))
+        assert self._is_blocked(self._run(runtime, "notion", {"action": "get_page"}, tool_executor, mode))
+        assert not self._is_blocked(self._run(runtime, "notion", {"action": "search"}, tool_executor, mode))
+        assert not self._is_blocked(self._run(runtime, "Read", {"file_path": str(tmp_path / "a")}, tool_executor, mode))
+        assert tool_executor.call_count == 2
+
+    @pytest.mark.parametrize("make_runtime", RUNTIME_FACTORIES)
+    def test_executor_receives_call_and_context(self, make_runtime, tmp_path):
+        runtime = make_runtime(tmp_path)
+        tool_executor = MagicMock(return_value="ok")
+        self._run(runtime, "Read", {"file_path": "a"}, tool_executor, plan_mode)
+        call, ctx = tool_executor.call_args.args
+        assert isinstance(call, ToolCall) and (call.name, dict(call.input)) == ("Read", {"file_path": "a"})
+        assert isinstance(ctx, PolicyContext) and ctx.mode is plan_mode
+
+    @pytest.mark.parametrize("make_runtime", RUNTIME_FACTORIES)
+    def test_runtime_holds_no_mode_state(self, make_runtime, tmp_path):
+        assert not hasattr(make_runtime(tmp_path), "_current_mode")
+
+
+class TestApplyMode:
+    SCHEMAS = [{"name": n} for n in ("Read", "Write", "Bash", "linear", "notion", "Agent")]
+
+    def test_plan_keeps_integrations_drops_writes(self):
+        names = {t["name"] for t in ClaudeCodeRuntime(MagicMock()).apply_mode(plan_mode, self.SCHEMAS)}
+        assert names == {"Read", "linear", "notion", "Agent"}
+
+    def test_allowed_tools_filter_schemas(self):
+        mode = Mode(name="ro", allowed_tools=frozenset({"Read", "notion:search"}))
+        names = {t["name"] for t in ClaudeCodeRuntime(MagicMock()).apply_mode(mode, self.SCHEMAS)}
+        assert names == {"Read", "notion"}

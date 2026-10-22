@@ -39,7 +39,7 @@ Measured by `python scripts/bench_policy.py` and `python scripts/bench_queue.py`
 | SG0 | Green, hermetic baseline | builder-sg0 | — | done |
 | SG1 | Shared interfaces + policy fixture corpus | builder-sg1 | SG0 | partial: contracts merged, block corpus pending owner |
 | SG2 | Unified policy engine (hook + enforce) | builder-sg2 | SG1 | not started |
-| SG3 | Mode semantics and subagent inheritance | builder-sg3 | SG1, SG2 | not started |
+| SG3 | Mode semantics and subagent inheritance | builder-sg3 | SG1, SG2 | done |
 | SG4 | Governed Claude Code CLI runtime | builder-sg4 | SG2, SG3 | not started |
 | SG5 | Approval integrity | builder-sg5 | SG1 | done |
 | SG6 | Queue and daemon robustness | builder-sg6 | SG1 | done |
@@ -183,3 +183,6 @@ _(owners append here)_
 - SG8: `.praxis/events.jsonl` rotates at 10 MB to a single `.1` generation; the gateway tailer starts at end of file (no replay) and follows truncation/rotation, but a tailer more than one rotation behind loses events. Only `--queue` (and the daemon via it) writes the log; a process that tails it publishes in-process only.
 - SG8: Telegram reply routing is kept in `.praxis/queue/telegram_routes.json`; `--telegram-listen` must run for replies to be staged. Done results go through `send_or_stage` (staged unless the autonomy gate passes); failed tasks are always staged.
 - SG1: block corpus (≥ 200 `expect: block` cases) pending the owner; only the allow corpus (`tests/fixtures/policy/allow.jsonl`) has landed.
+- SG3/SG2: `enforce()` now applies `Mode.permits` (`tool`/`tool:action`, `allowed_tools`) and no longer skips the mode check for WebFetch/WebSearch, but `policy.evaluate` still checks `name in mode.denied_tools` (rules untouched per SG2 ownership). SG2 should route evaluate's mode rule through `Mode.permits` to restore layer parity.
+- SG3/SG4: API runtimes take `ToolExecutor(call, ctx)` and a per-call `mode` (no `_current_mode`); `ClaudeCodeCLIRuntime` still declares `LegacyToolExecutor` and ignores mode.
+- SG3: a subagent's mode is `parent.restrict(definition or convergence override)` scoped to its declared tools (`allowed_tools`); an agent whose tools the parent mode denies is refused (`BLOCKED`), so plan sessions can spawn scout/planner only. scribe/verifier are now `mode: build`; verifier's Bash is limited to read-only use by its prompt only.

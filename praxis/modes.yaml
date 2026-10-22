@@ -3,8 +3,8 @@
 #
 # Schema for each mode entry:
 #   name (string): mode identifier used in --mode <name>
-#   denied_tools (list[str]): tool names that cannot be called in this mode
-#   allowed_tools (list[str]): explicit allow-list (empty = all tools allowed except denied)
+#   denied_tools (list[str]): "tool" (every action) or "tool:action" entries that cannot be called
+#   allowed_tools (list[str]): explicit allow-list, same entry forms (empty = all tools allowed except denied)
 #   prompt_suffix (string): appended to system prompt when mode is active
 #   requires_confirmation (bool): whether to confirm before writing
 #   model_override (string, optional): override model for this mode

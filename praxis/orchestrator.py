@@ -15,6 +15,7 @@ from .tools import TOOL_IMPLEMENTATIONS, get_tool_schemas
 if TYPE_CHECKING:
     from .modes.base import Mode
     from .agents.loader import AgentDefinition
+    from .policy import PolicyContext, ToolCall
 
 
 class Orchestrator:
@@ -246,12 +247,13 @@ class Orchestrator:
             f"Awaiting your approval via --approve-plan {plan_id}."
         )
 
-    def run_subagent(self, name: str, prompt: str) -> str:
+    def run_subagent(self, name: str, prompt: str, parent_mode: "Mode | None" = None) -> str:
         """Spawn a subagent session by name.
 
         Tries praxis/agents/{name}.yaml first (cross-runtime native definition),
         falls back to .claude/agents/{name}.md (Claude Code SDK discovery).
-        Applies per-subagent mode: convergence.yaml override > definition mode > None.
+        Mode: parent_mode.restrict(convergence.yaml override > definition mode),
+        scoped to the agent's declared tools.
         """
         import sys as _sys
 
@@ -259,7 +261,7 @@ class Orchestrator:
         try:
             from .agents.loader import load as _load_agent
             agent_def = _load_agent(name)
-            return self.spawn_from_definition(agent_def, prompt)
+            return self.spawn_from_definition(agent_def, prompt, parent_mode=parent_mode)
         except FileNotFoundError:
             pass  # fall through to .claude/agents/ discovery
         except Exception as e:
@@ -272,78 +274,81 @@ class Orchestrator:
             available = ", ".join(sorted(self.subagents))
             return f"Error: unknown subagent '{name}'. Available: {available}"
         defn = self.subagents[name]
-        runtime = self.runtime_overrides.get(name, self.runtime)
-        core_schemas = get_tool_schemas(defn.tools)
-        integration_schemas = get_integration_schemas(defn.tools)
+        return self._spawn(name, defn.model, defn.system_prompt, defn.tools, defn.mode, prompt, parent_mode)
 
-        # Determine effective mode: convergence.yaml override > SubagentDef.mode > None
+    def spawn_from_definition(
+        self, agent_def: "AgentDefinition", prompt: str, parent_mode: "Mode | None" = None
+    ) -> str:
+        """Spawn a subagent using an AgentDefinition from praxis/agents/.
+
+        Works on all three runtimes (Claude, Cloud, Local) because it passes
+        the full agent definition directly rather than relying on .claude/agents/ discovery.
+        """
+        return self._spawn(
+            agent_def.name, agent_def.model, agent_def.prompt, agent_def.tools,
+            agent_def.mode, prompt, parent_mode,
+        )
+
+    def _spawn(
+        self,
+        name: str,
+        model: str,
+        system: str,
+        tools: list[str],
+        mode_str: str | None,
+        prompt: str,
+        parent_mode: "Mode | None",
+    ) -> str:
+        import sys as _sys
+        from .modes import Mode as _Mode
+        from .policy import ToolCall
+
+        # A subagent has no authority its parent lacks: refuse agents whose tools the parent denies.
+        if parent_mode is not None:
+            denied = [t for t in tools if not parent_mode.permits(ToolCall(t, {}))]
+            if denied:
+                return (
+                    f"BLOCKED by §5 escalation boundary: subagent '{name}' uses "
+                    f"{', '.join(denied)}, denied in '{parent_mode.name}' mode"
+                )
+
         effective_mode = None
-        mode_str = self.agent_modes.get(name) or defn.mode
+        mode_str = self.agent_modes.get(name) or mode_str
         if mode_str:
             try:
-                from .modes import Mode as _Mode
                 effective_mode = _Mode.load(mode_str)
                 _sys.stderr.write(f"[praxis] subagent '{name}' mode: {mode_str}\n")
             except (ImportError, ValueError) as e:
                 _sys.stderr.write(
                     f"[praxis] warning: subagent '{name}' mode '{mode_str}' not found ({e}); using session mode\n"
                 )
+        if tools:
+            scope = _Mode(name=effective_mode.name if effective_mode else name, allowed_tools=frozenset(tools))
+            effective_mode = effective_mode.restrict(scope) if effective_mode else scope
+        if parent_mode is not None:
+            effective_mode = parent_mode.restrict(effective_mode)
 
+        runtime = self.runtime_overrides.get(name, self.runtime)
         return runtime.spawn_subagent(
-            model=defn.model,
-            system=defn.system_prompt,
+            model=model,
+            system=system,
             prompt=prompt,
-            tool_schemas=core_schemas + integration_schemas,
+            tool_schemas=get_tool_schemas(tools) + get_integration_schemas(tools),
             tool_executor=self._execute_with_hook,
             mode=effective_mode,
         )
 
-    def spawn_from_definition(self, agent_def: "AgentDefinition", prompt: str) -> str:
-        """Spawn a subagent using an AgentDefinition from praxis/agents/.
-
-        Works on all three runtimes (Claude, Cloud, Local) because it passes
-        the full agent definition directly rather than relying on .claude/agents/ discovery.
-        """
-        import sys as _sys
-
-        runtime = self.runtime_overrides.get(agent_def.name, self.runtime)
-        core_schemas = get_tool_schemas(agent_def.tools)
-        integration_schemas = get_integration_schemas(agent_def.tools)
-
-        # Determine effective mode: convergence.yaml override > AgentDefinition.mode > None
-        effective_mode = None
-        mode_str = self.agent_modes.get(agent_def.name) or agent_def.mode
-        if mode_str:
-            try:
-                from .modes import Mode as _Mode
-                effective_mode = _Mode.load(mode_str)
-                _sys.stderr.write(f"[praxis] subagent '{agent_def.name}' mode: {mode_str}\n")
-            except (ImportError, ValueError) as e:
-                _sys.stderr.write(
-                    f"[praxis] warning: subagent '{agent_def.name}' mode '{mode_str}' not found ({e}); using session mode\n"
-                )
-
-        return runtime.spawn_subagent(
-            model=agent_def.model,
-            system=agent_def.prompt,
-            prompt=prompt,
-            tool_schemas=core_schemas + integration_schemas,
-            tool_executor=self._execute_with_hook,
-            mode=effective_mode,
-        )
-
-    def _execute_with_hook(
-        self, tool_name: str, tool_input: dict[str, Any]
-    ) -> str:
+    def _execute_with_hook(self, call: "ToolCall", ctx: "PolicyContext") -> str:
+        tool_name, tool_input = call.name, dict(call.input)
         # §5 hook check — every tool, every time
         hook = run_pretool_hook(self.config, tool_name, tool_input)
         if not hook.allowed:
             return f"BLOCKED by §5 escalation boundary: {hook.reason}"
 
-        # Agent tool is dispatched here, not in tools.py
+        # Agent tool is dispatched here, not in tools.py; the child inherits the caller's mode.
         if tool_name == "Agent":
             return self.run_subagent(
-                tool_input.get("name", ""), tool_input.get("prompt", "")
+                tool_input.get("name", ""), tool_input.get("prompt", ""), parent_mode=ctx.mode
             )
 
         impl = TOOL_IMPLEMENTATIONS.get(tool_name) or INTEGRATION_IMPLEMENTATIONS.get(tool_name)
