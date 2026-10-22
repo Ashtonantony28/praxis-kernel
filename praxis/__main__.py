@@ -542,6 +542,8 @@ def _parse_mode(argv: list[str]) -> str:
         return "reject_plan"
     if "--whatsapp-listen" in argv:
         return "whatsapp_listen"
+    if "--telegram-listen" in argv:
+        return "telegram_listen"
     if "--validate" in argv:
         return "validate"
     if "--rebuild-memory-index" in argv:
@@ -1021,6 +1023,24 @@ def main() -> None:
             except KeyboardInterrupt:
                 adapter.stop()
                 sys.stderr.write("\n[praxis] WhatsApp listener stopped.\n")
+
+        elif mode == "telegram_listen":
+            import asyncio as _asyncio
+            import os as _os
+            from .queue import TaskQueue
+            from .integrations.telegram import TelegramAdapter
+
+            config = Config.from_env()
+            queue = TaskQueue(config.workspace_root / ".praxis" / "queue")
+            queue.ensure_dirs()
+            adapter = TelegramAdapter(
+                token=_os.environ.get("TELEGRAM_BOT_TOKEN", ""), queue=queue, config=config
+            )
+            sys.stderr.write("[praxis] Telegram listener running. Press Ctrl+C to stop.\n")
+            try:
+                _asyncio.run(adapter.listen())
+            except KeyboardInterrupt:
+                sys.stderr.write("\n[praxis] Telegram listener stopped.\n")
 
         elif mode == "validate":
             import os as _os

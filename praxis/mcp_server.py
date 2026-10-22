@@ -505,6 +505,7 @@ class MCPServer:
                 Mount("/ui", app=StaticFiles(directory=str(ui_dist), html=True))
             )
 
+        from .event_bus import event_log_lifespan
         from .hooks_engine import make_webhook_routes
         extra_routes.extend(make_webhook_routes())
 
@@ -542,7 +543,8 @@ class MCPServer:
                 Route("/api/heartbeat", endpoint=get_heartbeat, methods=["GET"]),
                 Route("/api/heartbeat", endpoint=put_heartbeat, methods=["PUT"]),
                 *extra_routes,
-            ]
+            ],
+            lifespan=event_log_lifespan(self._config.workspace_root),
         )
 
         bind_host = os.environ.get("PRAXIS_MCP_BIND", "127.0.0.1")

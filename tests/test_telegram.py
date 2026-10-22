@@ -75,8 +75,9 @@ class TestTelegramAdapterStart:
 
 
 class TestTelegramOnMessage:
-    async def test_on_message_creates_task_and_enqueues(self, tmp_path: Path):
+    async def test_on_message_creates_task_and_enqueues(self, tmp_path: Path, monkeypatch):
         """on_message() creates a Task with message content and enqueues it."""
+        monkeypatch.setenv("PRAXIS_OWNER_IDS", "telegram:55")
         adapter, mock_queue = _make_adapter(tmp_path)
         mock_update = _make_update(text="Tell me the weather", sender_id=55, chat_id=200)
         mock_context = MagicMock()
@@ -163,7 +164,7 @@ class TestTelegramSendOrStage:
                 mock_event_loop.run_until_complete = MagicMock()
                 mock_loop.return_value = mock_event_loop
                 # Also patch asyncio.run as a fallback
-                with patch("asyncio.run", MagicMock()):
+                with patch("asyncio.run", MagicMock(side_effect=lambda coro: coro.close())):
                     # Patch telegram.Bot so the import inside the method works
                     mock_bot_cls = MagicMock()
                     mock_bot_instance = MagicMock()
@@ -252,3 +253,206 @@ class TestTelegramSendOrStage:
 
         assert result is False
         mock_stage.assert_called_once_with(task_id="t4", text="short reply", chat_id=100)
+
+
+# ---------------------------------------------------------------------------
+# SG8: trust tiers, --telegram-listen, inbound -> queue -> staged reply
+# ---------------------------------------------------------------------------
+
+import asyncio
+import gc
+import sys
+import types
+import warnings
+
+
+
+def _write_convergence(root: Path, telegram: dict) -> None:
+    import yaml
+
+    (root / "convergence.yaml").write_text(yaml.safe_dump({"channels": {"telegram": telegram}}))
+
+
+def _real_adapter(root: Path) -> tuple[TelegramAdapter, TaskQueue]:
+    queue = TaskQueue(root / ".praxis" / "queue")
+    queue.ensure_dirs()
+    return TelegramAdapter(token="test-token", queue=queue, config=_make_config(root)), queue
+
+
+@pytest.fixture()
+def ws(tmp_path: Path, monkeypatch) -> Path:
+    monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.delenv("PRAXIS_OWNER_IDS", raising=False)
+    monkeypatch.delenv("PRAXIS_ADMIN_IDS", raising=False)
+    return tmp_path
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+class TestTelegramTrust:
+    def test_unknown_sender_enqueues_nothing(self, ws: Path):
+        adapter, queue = _real_adapter(ws)
+        _run(adapter.on_message(_make_update(sender_id=999), None))
+        assert queue.stats().get("pending", 0) == 0
+        assert adapter.deliver_replies() == []
+
+    def test_trusted_contact_enqueues_plan_mode(self, ws: Path):
+        _write_convergence(ws, {"trusted_contacts": [55]})
+        adapter, queue = _real_adapter(ws)
+        _run(adapter.on_message(_make_update(sender_id=55), None))
+        task = queue.claim()
+        assert (task.origin, task.mode) == ("telegram", "plan")
+
+    def test_owner_enqueues_unrestricted(self, ws: Path, monkeypatch):
+        monkeypatch.setenv("PRAXIS_OWNER_IDS", "telegram:55")
+        adapter, queue = _real_adapter(ws)
+        _run(adapter.on_message(_make_update(sender_id=55), None))
+        task = queue.claim()
+        assert (task.origin, task.mode) == ("telegram", None)
+
+
+class TestTelegramRoundTrip:
+    def test_inbound_queue_staged_reply(self, ws: Path):
+        _write_convergence(ws, {"autonomy": "staged", "trusted_contacts": [55]})
+        adapter, queue = _real_adapter(ws)
+        _run(adapter.on_message(_make_update(text="weather?", sender_id=55, chat_id=200), None))
+
+        assert adapter.deliver_replies() == []  # still pending
+        task = queue.claim()
+        queue.update(task.id, status="done", result="Sunny today.")
+
+        assert adapter.deliver_replies() == [task.id]
+        staged = ws / ".praxis" / "staging" / "telegram" / "replies" / f"{task.id}.json"
+        data = json.loads(staged.read_text())
+        assert (data["chat_id"], data["text"]) == (200, "Sunny today.")
+        assert adapter.deliver_replies() == []  # replied once
+
+    def test_routes_survive_adapter_restart(self, ws: Path):
+        _write_convergence(ws, {"trusted_contacts": [55]})
+        adapter, queue = _real_adapter(ws)
+        _run(adapter.on_message(_make_update(sender_id=55, chat_id=300), None))
+        task = queue.claim()
+        queue.update(task.id, status="done", result="hi")
+        fresh, _ = _real_adapter(ws)
+        assert fresh.deliver_replies() == [task.id]
+
+    def test_failed_task_is_staged_never_sent(self, ws: Path):
+        _write_convergence(ws, {"autonomy": "autonomous", "trusted_contacts": [55]})
+        adapter, queue = _real_adapter(ws)
+        _run(adapter.on_message(_make_update(sender_id=55), None))
+        task = queue.claim()
+        queue.update(task.id, status="failed", error="boom")
+        with patch.object(adapter, "send_or_stage") as send:
+            assert adapter.deliver_replies() == [task.id]
+        send.assert_not_called()
+        assert (ws / ".praxis" / "staging" / "telegram" / "replies" / f"{task.id}.json").exists()
+
+    def test_deliver_uses_convergence_channel_config(self, ws: Path):
+        cfg = {"autonomy": "autonomous", "trusted_contacts": [55], "max_autonomous_reply_words": 5}
+        _write_convergence(ws, cfg)
+        adapter, queue = _real_adapter(ws)
+        _run(adapter.on_message(_make_update(sender_id=55, chat_id=200), None))
+        task = queue.claim()
+        queue.update(task.id, status="done", result="ok")
+        with patch.object(adapter, "send_or_stage", return_value=False) as send:
+            adapter.deliver_replies()
+        send.assert_called_once_with(task.id, "ok", 200, 55, cfg)
+
+
+def _fake_telegram_ext(captured: dict) -> dict:
+    class _Updater:
+        async def start_polling(self):
+            captured["polling"] = True
+
+        async def stop(self):
+            captured["stopped"] = True
+
+    class _App:
+        updater = _Updater()
+
+        def add_handler(self, handler):
+            captured["handler"] = handler
+
+        async def initialize(self):
+            pass
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        async def shutdown(self):
+            pass
+
+    class _Builder:
+        def token(self, _t):
+            return self
+
+        def build(self):
+            return _App()
+
+    ext = types.ModuleType("telegram.ext")
+    ext.Application = types.SimpleNamespace(builder=_Builder)
+    ext.MessageHandler = lambda _f, cb: cb
+    ext.filters = types.SimpleNamespace(TEXT=MagicMock(), COMMAND=MagicMock())
+    return {"telegram": types.ModuleType("telegram"), "telegram.ext": ext}
+
+
+class TestTelegramListen:
+    def test_parse_mode(self):
+        from praxis.__main__ import _parse_mode
+
+        assert _parse_mode(["praxis", "--telegram-listen"]) == "telegram_listen"
+
+    def test_listen_round_trip_with_fake_bot(self, ws: Path):
+        _write_convergence(ws, {"trusted_contacts": [55]})
+        adapter, queue = _real_adapter(ws)
+        captured: dict = {}
+
+        async def _main():
+            stop = asyncio.Event()
+            listener = asyncio.create_task(adapter.listen(poll_interval=0.01, stop=stop))
+            while "handler" not in captured:
+                await asyncio.sleep(0.01)
+            await captured["handler"](_make_update(text="ping", sender_id=55, chat_id=7), None)
+            task = queue.claim()
+            queue.update(task.id, status="done", result="pong")
+            staged = ws / ".praxis" / "staging" / "telegram" / "replies" / f"{task.id}.json"
+            for _ in range(200):
+                if staged.exists():
+                    break
+                await asyncio.sleep(0.01)
+            stop.set()
+            await asyncio.wait_for(listener, 2)
+            return staged
+
+        with patch.dict(sys.modules, _fake_telegram_ext(captured)):
+            staged = _run(_main())
+        assert json.loads(staged.read_text())["text"] == "pong"
+        assert captured["polling"] and captured["stopped"]
+
+
+class TestTelegramDirectSendNoLeak:
+    def test_autonomous_send_in_running_loop_is_awaited(self, tmp_path: Path):
+        adapter, _ = _make_adapter(tmp_path)
+        bot = MagicMock()
+        bot.__aenter__ = AsyncMock(return_value=bot)
+        bot.__aexit__ = AsyncMock(return_value=None)
+        bot.send_message = AsyncMock()
+        fake = types.ModuleType("telegram")
+        fake.Bot = MagicMock(return_value=bot)
+        cfg = {"autonomy": "autonomous", "trusted_contacts": [7], "max_autonomous_reply_words": 50}
+
+        async def _main():
+            assert adapter.send_or_stage("t", "hi", 1, 7, cfg) is True
+            await adapter.drain_sends()
+
+        with warnings.catch_warnings(record=True) as caught, patch.dict(sys.modules, {"telegram": fake}):
+            warnings.simplefilter("always")
+            _run(_main())
+            gc.collect()
+        bot.send_message.assert_awaited_once_with(chat_id=1, text="hi")
+        assert not [w for w in caught if "never awaited" in str(w.message)]

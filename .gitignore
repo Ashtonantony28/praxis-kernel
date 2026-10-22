@@ -49,6 +49,7 @@ wiki/log.md
 .praxis/logs/*
 !.praxis/logs/.gitkeep
 .praxis/praxis.pid
+.praxis/events.jsonl*
 .praxis/schedule/*
 
 # UI build artifacts — never commit

@@ -479,34 +479,38 @@ def run_queue_loop(workspace: Path) -> None:
         except Exception:
             pass
 
+    from .event_bus import enable_event_log, get_event_bus
+    enable_event_log(workspace)
     sys.stderr.write(f"[praxis] queue loop started, polling every {poll_interval}s\n")
-
-    # Tasks run one at a time: runtimes and their per-task cost breakers are shared.
-    while not _shutdown_requested:
-        try:
-            task = queue.claim()
-        except Exception as exc:
-            sys.stderr.write(f"[praxis] queue claim failed: {exc}\n")
-            task = None
-        if task is None:
-            time.sleep(poll_interval)
-            continue
-
-        _run_task_guarded(
-            task, orch, queue, cp_store,
-            conv=conv,
-            all_runtimes=all_runtimes,
-            config=config,
-            notifier=_notifier,
-        )
-
-    # Send shutdown notification
     try:
-        _notifier.notify(
-            f"[Praxis] Shutting down. "
-            f"Session complete."
-        )
-    except Exception:
-        pass
+        # Tasks run one at a time: runtimes and their per-task cost breakers are shared.
+        while not _shutdown_requested:
+            try:
+                task = queue.claim()
+            except Exception as exc:
+                sys.stderr.write(f"[praxis] queue claim failed: {exc}\n")
+                task = None
+            if task is None:
+                time.sleep(poll_interval)
+                continue
 
-    sys.stderr.write("[praxis] queue loop stopped\n")
+            _run_task_guarded(
+                task, orch, queue, cp_store,
+                conv=conv,
+                all_runtimes=all_runtimes,
+                config=config,
+                notifier=_notifier,
+            )
+
+        # Send shutdown notification
+        try:
+            _notifier.notify(
+                f"[Praxis] Shutting down. "
+                f"Session complete."
+            )
+        except Exception:
+            pass
+
+        sys.stderr.write("[praxis] queue loop stopped\n")
+    finally:
+        get_event_bus().attach_log(None)

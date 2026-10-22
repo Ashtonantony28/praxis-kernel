@@ -222,6 +222,11 @@ class TaskQueue:
 
     # --- legacy wrappers and helpers ---
 
+    def get(self, task_id: str) -> Task | None:
+        with self._locked(exclusive=False):
+            t = self._tasks.get(task_id)
+            return copy.copy(t) if t is not None else None
+
     def _read_all(self) -> list[Task]:
         with self._locked(exclusive=False):
             return [copy.copy(t) for t in self._tasks.values()]

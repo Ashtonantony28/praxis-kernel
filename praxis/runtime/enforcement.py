@@ -89,9 +89,10 @@ def _workspace_root() -> Path:
 
 
 def _allowed_domains() -> frozenset[str]:
-    """Return PRAXIS_ALLOWED_DOMAINS as a frozenset of domain strings."""
-    raw = os.environ.get("PRAXIS_ALLOWED_DOMAINS", "")
-    return frozenset(d.strip() for d in raw.split(",") if d.strip())
+    """Return PRAXIS_ALLOWED_DOMAINS plus convergence.yaml allowed_domains."""
+    from praxis.config import resolve_allowed_domains
+
+    return resolve_allowed_domains()
 
 
 def _resolve(p: str) -> Path:

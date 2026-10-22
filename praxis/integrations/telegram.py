@@ -34,6 +34,7 @@ class TelegramAdapter:
         self._queue = queue
         self._config = config
         self._app: Any = None  # telegram.ext.Application, set in start()
+        self._sends: set[Any] = set()  # in-flight gated sends scheduled on a running loop
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -69,6 +70,13 @@ class TelegramAdapter:
         await self._app.start()
         await self._app.updater.start_polling()
 
+    async def drain_sends(self) -> None:
+        """Await gated sends scheduled from inside a running loop."""
+        import asyncio
+
+        if self._sends:
+            await asyncio.gather(*self._sends, return_exceptions=True)
+
     async def stop(self) -> None:
         """Stop polling and shut down gracefully."""
         if self._app is not None:
@@ -97,22 +105,83 @@ class TelegramAdapter:
         message_id: int = msg.message_id
 
         from ..queue import Task
+        from ..trust import Tier, mode_for, tier_for
+
+        tier = tier_for("telegram", str(sender_id))
+        if tier is Tier.BLOCKED:
+            return
 
         prompt = (
             f"[telegram] from={sender_id} chat={chat_id} "
             f"msg_id={message_id}: {text}"
         )
-        task = Task.create(
-            prompt=prompt,
-            priority=0,
-            stages=None,
-        )
-        # Attach telegram metadata for later use by send_or_stage
-        task_dict = task.to_dict()
-        task_dict["_telegram_sender_id"] = sender_id
-        task_dict["_telegram_chat_id"] = chat_id
-
+        task = Task.create(prompt=prompt, origin="telegram", mode=mode_for(tier))
         self._queue.append(task)
+        routes = self._load_routes()
+        routes[task.id] = {"chat_id": chat_id, "sender_id": sender_id}
+        self._save_routes(routes)
+
+    # ------------------------------------------------------------------
+    # Replies for finished tasks
+    # ------------------------------------------------------------------
+
+    def _routes_path(self) -> Path:
+        return self._config.workspace_root / ".praxis" / "queue" / "telegram_routes.json"
+
+    def _load_routes(self) -> dict[str, dict[str, int]]:
+        try:
+            data = json.loads(self._routes_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_routes(self, routes: dict[str, dict[str, int]]) -> None:
+        path = self._routes_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(routes), encoding="utf-8")
+        os.replace(tmp, path)
+
+    def deliver_replies(self) -> list[str]:
+        """Reply to finished Telegram tasks via send_or_stage; returns the task ids handled.
+
+        A done task's result goes through the autonomy gate; a failed task is always staged.
+        """
+        from ..trust import channel_config
+
+        routes = self._load_routes()
+        handled: list[str] = []
+        changed = False
+        for task_id, route in list(routes.items()):
+            task = self._queue.get(task_id)
+            if task is not None and task.status not in ("done", "failed"):
+                continue
+            if task is not None:
+                chat_id, sender_id = int(route["chat_id"]), int(route["sender_id"])
+                text = task.result or ""
+                if task.status == "done" and text.strip():
+                    self.send_or_stage(task_id, text, chat_id, sender_id, channel_config("telegram"))
+                else:
+                    self.stage_reply(task_id=task_id, text=text or task.error or "", chat_id=chat_id)
+                handled.append(task_id)
+            del routes[task_id]
+            changed = True
+        if changed:
+            self._save_routes(routes)
+        return handled
+
+    async def listen(self, poll_interval: float = 2.0, stop: Any = None) -> None:
+        """--telegram-listen: long-poll inbound messages and reply to finished tasks."""
+        import asyncio
+
+        await self.start()
+        try:
+            while stop is None or not stop.is_set():
+                self.deliver_replies()
+                await asyncio.sleep(poll_interval)
+        finally:
+            await self.drain_sends()
+            await self.stop()
 
     # ------------------------------------------------------------------
     # Outbound — WRITE-ESCALATE (structural governance)
@@ -189,14 +258,13 @@ class TelegramAdapter:
                     await bot.send_message(chat_id=chat_id, text=text)
 
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Running inside an async context — schedule as a task
-                    asyncio.ensure_future(_send())
-                else:
-                    loop.run_until_complete(_send())
+                loop = asyncio.get_running_loop()
             except RuntimeError:
                 asyncio.run(_send())
+            else:
+                task = loop.create_task(_send())
+                self._sends.add(task)
+                task.add_done_callback(self._sends.discard)
 
             return True
 
