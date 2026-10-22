@@ -16,6 +16,7 @@ from .orchestrator import Orchestrator
 from .queue import Task, TaskQueue
 from .runtime import ClaudeCodeCLIRuntime, ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
 from .runtime.base import Runtime
+from .modes import Mode
 from .runtime.cost import CostCircuitBreaker
 from .staging import task_scope
 
@@ -155,6 +156,11 @@ def _fail_unfinished(queue: TaskQueue, task_id: str, exc: BaseException) -> None
         sys.stderr.write(f"[praxis] could not mark task {task_id} failed: {inner}\n")
 
 
+def _run_kwargs(task: Task) -> dict:
+    """orch.run kwargs for the task's mode; an unknown mode raises (fail closed)."""
+    return {"mode": Mode.load(task.mode)} if task.mode else {}
+
+
 def _run_atomic_task(
     task: Task, orch: Orchestrator, queue: TaskQueue, *, notifier=None, model: str | None = None
 ) -> None:
@@ -175,13 +181,16 @@ def _run_atomic_task(
     except Exception:
         pass
     sys.stderr.write(f"[praxis] running task {task.id}: {task.prompt[:80]}\n")
+    run_kw = _run_kwargs(task)
+    if model:
+        run_kw["model"] = model
 
     last_exc: BaseException | None = None
     attempts = 0
     for attempt in range(_TASK_MAX_RETRIES):
         attempts = attempt + 1
         try:
-            result = orch.run(task.prompt, model=model) if model else orch.run(task.prompt)
+            result = orch.run(task.prompt, **run_kw)
             queue.update(task.id, status="done", result=result)
             try:
                 from .event_bus import TASK_COMPLETED, get_event_bus
@@ -271,6 +280,7 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
     sys.stderr.write(f"[praxis] running staged task {task.id} ({len(task.stages)} stages)\n")
 
     try:
+        run_kw = _run_kwargs(task)
         while True:
             idx = cp.next_stage_index()
             if idx is None:
@@ -285,7 +295,7 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
             stage_prompt = task.stages[idx]
             sys.stderr.write(f"[praxis] task {task.id} stage {idx}: {stage_prompt[:60]}\n")
 
-            result = orch.run(stage_prompt)
+            result = orch.run(stage_prompt, **run_kw)
             cp.mark_stage_done(idx, result)
             cp_store.save(cp)
 

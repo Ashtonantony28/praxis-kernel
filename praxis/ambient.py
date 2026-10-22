@@ -1,7 +1,7 @@
 """Ambient event monitor — background thread polling email, calendar, Linear, GitHub.
 
 Four optional event sources, each skipped if its env vars are not set:
-  EmailMonitor   — IMAP poll for new unread emails from known contacts (wiki/pages/)
+  EmailMonitor   — IMAP poll for new unread emails from trusted senders (trust.tier_for)
   CalendarMonitor — iCal feed for events starting within PRAXIS_AMBIENT_CAL_MINUTES (default 30)
   LinearMonitor  — Linear GraphQL API for newly assigned issues
   GitHubMonitor  — GitHub notifications API for new PR review requests
@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .queue import Task, TaskQueue
+from .trust import Tier, mode_for, tier_for
 
 
 class SeenStore:
@@ -81,7 +82,7 @@ def _decode_header_val(raw: str) -> str:
 
 
 class EmailMonitor:
-    """Polls IMAP INBOX for new unread emails from known contacts (wiki/pages/)."""
+    """Polls IMAP INBOX for new unread emails from trusted senders (trust.tier_for)."""
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace = workspace_root
@@ -90,26 +91,10 @@ class EmailMonitor:
         self._password = os.environ.get("PRAXIS_EMAIL_PASSWORD", "")
         self._seen = SeenStore("email", workspace_root)
 
-    def _known_contacts(self) -> set[str]:
-        contacts: set[str] = set()
-        pages_dir = self._workspace / "wiki" / "pages"
-        if not pages_dir.exists():
-            return contacts
-        email_re = re.compile(r"[\w.+\-]+@[\w\-]+\.[\w.]+")
-        for md_file in pages_dir.glob("*.md"):
-            try:
-                text = md_file.read_text(encoding="utf-8", errors="ignore")
-                for match in email_re.findall(text):
-                    contacts.add(match.lower())
-            except Exception:
-                pass
-        return contacts
-
     def poll(self, queue: TaskQueue) -> list[str]:
         """Poll IMAP for new unread emails. Returns list of UIDs enqueued."""
         if not (self._host and self._user and self._password):
             return []
-        known = self._known_contacts()
         created: list[str] = []
         try:
             conn = imaplib.IMAP4_SSL(self._host)
@@ -132,22 +117,25 @@ class EmailMonitor:
                 subject = _decode_header_val(subject_raw)
                 addr_match = re.search(r"<([^>]+)>", from_raw)
                 sender_addr = addr_match.group(1).lower() if addr_match else from_raw.lower().strip()
-                if not known or sender_addr in known:
-                    self._seen.mark_seen(uid_str)
-                    prompt = (
-                        f"New email from {sender}: {subject} — "
-                        "should I draft a reply or flag it?"
+                self._seen.mark_seen(uid_str)
+                tier = tier_for("email", sender_addr)
+                if tier is Tier.BLOCKED:
+                    sys.stderr.write("[praxis/ambient] ignored email from untrusted sender\n")
+                    continue
+                prompt = (
+                    f"New email from {sender}: {subject} — "
+                    "should I draft a reply or flag it?"
+                )
+                queue.append(Task.create(prompt, priority=10, origin="email", mode=mode_for(tier)))
+                created.append(uid_str)
+                try:
+                    from .event_bus import AMBIENT_TRIGGERED, get_event_bus
+                    get_event_bus().publish_sync(
+                        AMBIENT_TRIGGERED,
+                        {"source": "email", "summary": prompt[:200]},
                     )
-                    queue.append(Task.create(prompt, priority=10))
-                    created.append(uid_str)
-                    try:
-                        from .event_bus import AMBIENT_TRIGGERED, get_event_bus
-                        get_event_bus().publish_sync(
-                            AMBIENT_TRIGGERED,
-                            {"source": "email", "summary": prompt[:200]},
-                        )
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
             try:
                 conn.logout()
             except Exception:

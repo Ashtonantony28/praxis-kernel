@@ -39,6 +39,14 @@ def _make_app(tmp_path: Path):
     return Starlette(routes=routes)
 
 
+@pytest.fixture(autouse=True)
+def _trusted_sources(tmp_path: Path):
+    """SG7: webhook sources fail closed; trust the sources these tests post to."""
+    (tmp_path / "convergence.yaml").write_text(
+        "channels:\n  webhook:\n    trusted_contacts: [github, generic, linear, slack, myservice, noauth, mysvc, stripe, test]\n"
+    )
+
+
 def _client(tmp_path: Path):
     """Return a Starlette TestClient and the workspace path."""
     from starlette.testclient import TestClient

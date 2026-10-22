@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .queue import Task, TaskQueue
+from .trust import Tier, mode_for, tier_for
 
 
 class SlackSocketListener:
@@ -120,7 +121,9 @@ class SlackSocketListener:
         if not text:
             return
         user_id = event.get("user", "unknown")
-        task = Task.create(prompt=text, priority=5)
+        task = self._task_for(user_id, text)
+        if task is None:
+            return
         self._queue.append(task)
         sys.stderr.write(
             f"[slack_listener] Enqueued task {task.id} from DM by {user_id}: "
@@ -133,7 +136,9 @@ class SlackSocketListener:
         text = payload.get("text", "").strip()
         user_id = payload.get("user_id", "unknown")
         prompt = f"{command} {text}".strip() if text else command
-        task = Task.create(prompt=prompt, priority=5)
+        task = self._task_for(user_id, prompt)
+        if task is None:
+            return
         self._queue.append(task)
         sys.stderr.write(
             f"[slack_listener] Enqueued task {task.id} from slash command "
@@ -144,11 +149,23 @@ class SlackSocketListener:
             f"Task queued (id={task.id}): {prompt[:80]}",
         )
 
+    @staticmethod
+    def _task_for(user_id: str, prompt: str) -> Task | None:
+        """Task for a trusted sender, or None (one log line, no content) when BLOCKED."""
+        tier = tier_for("slack", user_id)
+        if tier is Tier.BLOCKED:
+            sys.stderr.write("[slack_listener] ignored message from untrusted sender\n")
+            return None
+        return Task.create(prompt=prompt, priority=5, origin="slack", mode=mode_for(tier))
+
     def _handle_block_action(self, payload: dict) -> None:
-        """Process approval button clicks from interactive block messages."""
+        """Process approval button clicks from interactive block messages (ADMIN+ only)."""
         actions = payload.get("actions", [])
         user = payload.get("user", {})
         user_id = user.get("id", "unknown")
+        if tier_for("slack", user_id) < Tier.ADMIN:
+            sys.stderr.write("[slack_listener] ignored approval click from non-admin sender\n")
+            return
         for action in actions:
             action_id = action.get("action_id", "")
             value = action.get("value", "")

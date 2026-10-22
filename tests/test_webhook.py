@@ -25,6 +25,14 @@ def _make_app():
     return Starlette(routes=routes)
 
 
+@pytest.fixture(autouse=True)
+def _trusted_sources(tmp_path: Path):
+    """SG7: webhook sources fail closed; trust the sources these tests post to."""
+    (tmp_path / "convergence.yaml").write_text(
+        "channels:\n  webhook:\n    trusted_contacts: [github, generic, linear, slack, myservice, noauth, mysvc, stripe, test]\n"
+    )
+
+
 def _hmac_sig(secret: str, body: bytes) -> str:
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
@@ -395,3 +403,45 @@ class TestMakeWebhookRoutesList:
         result = make_webhook_routes()
         route = result[0]
         assert "/webhooks" in str(route.path)
+
+
+class TestWebhookTrust:
+    """SG7: untrusted sources enqueue nothing; trusted ones run in plan mode."""
+
+    def _post(self, source: str, tmp_path: Path, extra_env: dict | None = None, headers: dict | None = None):
+        from starlette.testclient import TestClient
+
+        client = TestClient(_make_app(), raise_server_exceptions=True)
+        body = json.dumps({"x": "do the thing"}).encode()
+        fake_queue = MagicMock()
+        env = {"PRAXIS_WORKSPACE_ROOT": str(tmp_path), **(extra_env or {})}
+        with patch.dict(os.environ, env):
+            with patch("praxis.queue.TaskQueue", return_value=fake_queue):
+                resp = client.post(f"/webhooks/{source}", content=body, headers=headers or {})
+        return resp, fake_queue
+
+    def test_unknown_source_enqueues_nothing(self, tmp_path: Path):
+        resp, q = self._post("unknownsrc", tmp_path)
+        assert resp.status_code == 403
+        q.append.assert_not_called()
+
+    def test_webhook_task_runs_in_plan_mode(self, tmp_path: Path):
+        resp, q = self._post("github", tmp_path)
+        assert resp.status_code == 201
+        task = q.append.call_args[0][0]
+        assert task.origin == "webhook" and task.mode == "plan"
+
+    def test_owner_webhook_source_still_plan_mode(self, tmp_path: Path):
+        resp, q = self._post("ownedsrc", tmp_path, {"PRAXIS_OWNER_IDS": "webhook:ownedsrc"})
+        assert resp.status_code == 201
+        assert q.append.call_args[0][0].mode == "plan"
+
+    def test_signed_unlisted_source_is_trusted(self, tmp_path: Path):
+        body = json.dumps({"x": "do the thing"}).encode()
+        sig = _hmac_sig("dummy-secret", body)
+        resp, q = self._post(
+            "signedsrc", tmp_path, {"PRAXIS_WEBHOOK_SECRET_SIGNEDSRC": "dummy-secret"},
+            {"X-Hub-Signature-256": sig},
+        )
+        assert resp.status_code == 201
+        assert q.append.call_args[0][0].mode == "plan"

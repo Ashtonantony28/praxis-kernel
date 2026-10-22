@@ -25,8 +25,9 @@ try:
     from mcp.server.sse import SseServerTransport
     from mcp import types as mcp_types
     from starlette.applications import Starlette
+    from starlette.datastructures import Headers
     from starlette.requests import Request
-    from starlette.responses import Response
+    from starlette.responses import JSONResponse, Response
     from starlette.routing import Mount, Route, WebSocketRoute
     from starlette.websockets import WebSocket, WebSocketDisconnect
 except ImportError as exc:
@@ -36,8 +37,10 @@ except ImportError as exc:
         f"  Missing: {exc}"
     ) from exc
 
+from .api import bearer_ok
 from .config import Config
 from .hooks import run_pretool_hook
+from .policy import PolicyContext, ToolCall, evaluate
 from .integrations import INTEGRATION_IMPLEMENTATIONS, INTEGRATION_SCHEMAS
 from .tools import TOOL_IMPLEMENTATIONS, TOOL_SCHEMAS
 
@@ -161,11 +164,17 @@ class MCPServer:
     ) -> Callable[..., str]:
         """Factory returning a sync (**kwargs) -> str closure.
 
-        The closure calls the §5 escalation hook before executing the
-        implementation. Blocked calls return a BLOCKED message; impl is
-        never called.
+        The closure calls the §5 escalation hook, then policy.evaluate()
+        (origin "mcp"), before executing the implementation. Blocked calls
+        return a BLOCKED message; impl is never called.
         """
         config = self._config
+        policy_ctx = PolicyContext(
+            workspace_root=Path(config.workspace_root).resolve(),
+            allowed_domains=config.allowed_domains,
+            mode=None,
+            origin="mcp",
+        )
 
         def handler(**kwargs: Any) -> str:
             tool_input = dict(kwargs)
@@ -175,6 +184,9 @@ class MCPServer:
                 return (
                     f"BLOCKED by §5 escalation boundary: {hook_result.reason}"
                 )
+            verdict = evaluate(ToolCall(tool_name, tool_input), policy_ctx)
+            if not verdict.allowed:
+                return f"BLOCKED by policy ({verdict.rule}): {verdict.reason}"
             # Hook approved. impl_fn calls _redact_secrets() internally.
             return impl_fn(tool_input, config)
 
@@ -204,7 +216,22 @@ class MCPServer:
                 )
             return Response()
 
+        def _unauthorized() -> Response:
+            return JSONResponse(
+                {"error": "Unauthorized", "detail": "Valid Bearer token required"},
+                status_code=401,
+            )
+
+        # /sse and /messages expose every tool: PRAXIS_UI_TOKEN is required (fail closed).
+        async def messages_app(scope: Any, receive: Any, send: Any) -> None:
+            if not bearer_ok(Headers(scope=scope).get("authorization", ""), required=True):
+                await _unauthorized()(scope, receive, send)
+                return
+            await sse_transport.handle_post_message(scope, receive, send)
+
         async def sse_endpoint(request: Request) -> Response:
+            if not bearer_ok(request.headers.get("Authorization", ""), required=True):
+                return _unauthorized()
             return await handle_sse(
                 request.scope, request.receive, request._send  # type: ignore[attr-defined]
             )
@@ -487,7 +514,7 @@ class MCPServer:
                 Route("/metrics", endpoint=metrics_endpoint, methods=["GET"]),
                 Route("/dashboard", endpoint=dashboard_endpoint, methods=["GET"]),
                 WebSocketRoute("/ws", endpoint=_ws_endpoint),
-                Mount(message_path, app=sse_transport.handle_post_message),
+                Mount(message_path, app=messages_app),
                 # REST API routes
                 Route("/api/status", endpoint=get_status, methods=["GET"]),
                 Route("/api/queue", endpoint=get_queue, methods=["GET"]),

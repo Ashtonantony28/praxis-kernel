@@ -7,6 +7,7 @@ auth is disabled (safe when binding to 127.0.0.1 only).
 
 from __future__ import annotations
 
+import hmac
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,18 +31,24 @@ from .event_bus import get_event_bus
 _VERSION = "0.1.0"
 
 
+def bearer_ok(auth_header: str, *, required: bool = False) -> bool:
+    """Constant-time check of an Authorization header against PRAXIS_UI_TOKEN.
+
+    With no token configured this passes unless ``required`` (fail closed).
+    """
+    token = os.environ.get("PRAXIS_UI_TOKEN", "")
+    if not token:
+        return not required
+    return hmac.compare_digest(auth_header.encode(), f"Bearer {token}".encode())
+
+
 def _check_token(request: Request) -> Response | None:
     """Check Bearer token for HTTP requests.
 
     Returns None if auth passes (token not configured, or token matches).
     Returns a 401 JSONResponse if the token is configured and does not match.
     """
-    token = os.environ.get("PRAXIS_UI_TOKEN", "")
-    if not token:
-        # Auth disabled — no token configured.
-        return None
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header == f"Bearer {token}":
+    if bearer_ok(request.headers.get("Authorization", "")):
         return None
     return JSONResponse(
         {"error": "Unauthorized", "detail": "Valid Bearer token required"},
@@ -64,12 +71,9 @@ def _check_token_ws(websocket: "WebSocket") -> bool:
         return True
     # Check query param first, then Authorization header.
     query_token = websocket.query_params.get("token", "")
-    if query_token == token:
+    if hmac.compare_digest(query_token.encode(), token.encode()):
         return True
-    auth_header = websocket.headers.get("Authorization", "")
-    if auth_header == f"Bearer {token}":
-        return True
-    return False
+    return bearer_ok(websocket.headers.get("Authorization", ""))
 
 
 # ---------------------------------------------------------------------------

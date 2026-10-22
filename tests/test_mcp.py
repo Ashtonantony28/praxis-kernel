@@ -964,3 +964,105 @@ class TestMCPRoutesHostStatic:
 
         captured = capsys.readouterr()
         assert "/ws" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# SG7: gateway auth and policy.evaluate()
+# ---------------------------------------------------------------------------
+
+
+class _FakeTransport:
+    def __init__(self, path):
+        self.posted = 0
+
+    def connect_sse(self, scope, receive, send):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _cm():
+            await send({"type": "http.response.start", "status": 200,
+                        "headers": [(b"content-type", b"text/event-stream")]})
+            await send({"type": "http.response.body", "body": b"event: endpoint\n\n"})
+            yield (None, None)
+
+        return _cm()
+
+    async def handle_post_message(self, scope, receive, send):
+        self.posted += 1
+        await send({"type": "http.response.start", "status": 202, "headers": []})
+        await send({"type": "http.response.body", "body": b"Accepted"})
+
+
+class TestGatewayAuth:
+    TOKEN = "dummy-ui-token"
+
+    def _client(self, config):
+        from unittest.mock import AsyncMock
+        from starlette.testclient import TestClient
+
+        captured = {}
+        transports = []
+
+        def make_transport(path):
+            t = _FakeTransport(path)
+            transports.append(t)
+            return t
+
+        with patch("praxis.mcp_server.uvicorn.run", side_effect=lambda app, **kw: captured.update(app=app)), \
+             patch("praxis.mcp_server.SseServerTransport", side_effect=make_transport):
+            server = MCPServer(config)
+            server._mcp.run = AsyncMock(return_value=None)
+            server.start(port=8765)
+        return TestClient(captured["app"], raise_server_exceptions=False), transports[0]
+
+    @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"}, {"Authorization": TOKEN}])
+    def test_sse_rejects_missing_or_wrong_token(self, config, monkeypatch, headers):
+        monkeypatch.setenv("PRAXIS_UI_TOKEN", self.TOKEN)
+        client, _ = self._client(config)
+        assert client.get("/sse", headers=headers).status_code == 401
+
+    def test_sse_rejects_when_token_unconfigured(self, config, monkeypatch):
+        monkeypatch.delenv("PRAXIS_UI_TOKEN", raising=False)
+        client, _ = self._client(config)
+        assert client.get("/sse").status_code == 401
+
+    def test_sse_authenticated_connects(self, config, monkeypatch):
+        monkeypatch.setenv("PRAXIS_UI_TOKEN", self.TOKEN)
+        client, _ = self._client(config)
+        resp = client.get("/sse", headers={"Authorization": f"Bearer {self.TOKEN}"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+
+    def test_messages_requires_token(self, config, monkeypatch):
+        monkeypatch.setenv("PRAXIS_UI_TOKEN", self.TOKEN)
+        client, transport = self._client(config)
+        assert client.post("/messages/?session_id=x", content=b"{}").status_code == 401
+        assert transport.posted == 0
+        ok = client.post("/messages/?session_id=x", content=b"{}",
+                         headers={"Authorization": f"Bearer {self.TOKEN}"})
+        assert ok.status_code == 202 and transport.posted == 1
+
+
+class TestMCPPolicyEvaluate:
+    def test_evaluate_block_never_runs_tool(self, config):
+        from praxis.hooks import HookResult
+        from praxis.policy import Verdict
+
+        impl = MagicMock()
+        with patch("praxis.mcp_server.run_pretool_hook", return_value=HookResult(allowed=True)), \
+             patch("praxis.mcp_server.evaluate", return_value=Verdict(False, "test.rule", "nope")) as ev:
+            result = MCPServer(config)._make_handler("Bash", impl)(command="ls")
+        impl.assert_not_called()
+        assert result.startswith("BLOCKED") and "test.rule" in result
+        call, ctx = ev.call_args[0]
+        assert call.name == "Bash" and dict(call.input) == {"command": "ls"}
+        assert ctx.origin == "mcp" and ctx.workspace_root == config.workspace_root.resolve()
+
+    def test_real_evaluate_blocks_write_outside_workspace(self, config):
+        from praxis.hooks import HookResult
+
+        impl = MagicMock()
+        with patch("praxis.mcp_server.run_pretool_hook", return_value=HookResult(allowed=True)):
+            result = MCPServer(config)._make_handler("Write", impl)(file_path="/etc/passwd", content="x")
+        impl.assert_not_called()
+        assert result.startswith("BLOCKED")
