@@ -13,7 +13,7 @@ import json
 import os
 from typing import TYPE_CHECKING, Any
 
-from .base import LegacyToolExecutor, Runtime
+from .base import Runtime, ToolExecutor, check_call
 from .cost import CostCircuitBreaker
 
 if TYPE_CHECKING:
@@ -57,7 +57,6 @@ class OpenAIBaseRuntime(Runtime):
         self.default_model = default_model
         self.base_url = base_url
         self._cost_breaker = CostCircuitBreaker.from_env()
-        self._current_mode: "Mode | None" = None
         self._session_tokens: int = 0
 
     def run_loop(
@@ -67,12 +66,11 @@ class OpenAIBaseRuntime(Runtime):
         system: str,
         user_message: str,
         tool_schemas: list[dict[str, Any]],
-        tool_executor: LegacyToolExecutor,
+        tool_executor: ToolExecutor,
         max_turns: int = MAX_TURNS,
         mode: "Mode | None" = None,
     ) -> str:
         # Apply mode: filter tools and inject prompt suffix
-        self._current_mode = mode
         effective_system = system
         effective_tool_schemas = tool_schemas
         if mode is not None:
@@ -145,7 +143,7 @@ class OpenAIBaseRuntime(Runtime):
                 return last_content
 
             # Execute tool calls and append results
-            tool_results = self.execute_tool(msg.tool_calls, tool_executor)
+            tool_results = self.execute_tool(msg.tool_calls, tool_executor, mode)
             for result in tool_results:
                 messages = self.manage_context(messages, "tool", result)
 
@@ -158,7 +156,7 @@ class OpenAIBaseRuntime(Runtime):
         system: str,
         prompt: str,
         tool_schemas: list[dict[str, Any]],
-        tool_executor: LegacyToolExecutor,
+        tool_executor: ToolExecutor,
         max_turns: int = MAX_TURNS,
         mode: "Mode | None" = None,
     ) -> str:
@@ -175,7 +173,8 @@ class OpenAIBaseRuntime(Runtime):
     def execute_tool(
         self,
         response_content: list[Any],
-        tool_executor: LegacyToolExecutor,
+        tool_executor: ToolExecutor,
+        mode: "Mode | None" = None,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for tc in response_content:
@@ -203,9 +202,9 @@ class OpenAIBaseRuntime(Runtime):
                 continue
 
             # Layer 1 enforcement — raises EnforcementError if blocked
+            from .enforcement import EnforcementError
             try:
-                from .enforcement import enforce, EnforcementError
-                enforce(name, args, mode=self._current_mode)
+                call, ctx = check_call(name, args, mode)
             except EnforcementError as _e:
                 output = f"BLOCKED by §5 escalation boundary: {_e}"
                 results.append({
@@ -217,7 +216,7 @@ class OpenAIBaseRuntime(Runtime):
 
             import time as _time
             _t0 = _time.monotonic()
-            output = tool_executor(name, args)
+            output = tool_executor(call, ctx)
             _latency_ms = (_time.monotonic() - _t0) * 1000
 
             # Record telemetry — never let this break the main loop

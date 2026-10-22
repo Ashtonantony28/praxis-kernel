@@ -91,8 +91,8 @@ SAMPLE_TOOL_SCHEMAS = [
 ]
 
 
-def _noop_executor(name: str, args: dict[str, Any]) -> str:
-    return f"executed {name}"
+def _noop_executor(call, ctx) -> str:
+    return f"executed {call.name}"
 
 
 @pytest.fixture(autouse=True)
@@ -203,8 +203,8 @@ def test_run_loop_with_tool_call():
 
     calls_log: list[tuple[str, dict]] = []
 
-    def tracking_executor(name: str, args: dict[str, Any]) -> str:
-        calls_log.append((name, args))
+    def tracking_executor(call, ctx) -> str:
+        calls_log.append((call.name, dict(call.input)))
         return "file1.txt\nfile2.txt"
 
     result = runtime.run_loop(

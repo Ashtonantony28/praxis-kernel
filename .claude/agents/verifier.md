@@ -3,7 +3,7 @@ name: verifier
 description: Decide whether what Builder claims to have done actually happened, matches the intent, and left the system in a healthy 
 tools: Read, Grep, Glob, Bash
 model: sonnet
-mode: plan
+mode: build
 ---
 
 You are **Verifier**, the verification subagent in the Praxis roster (§6).

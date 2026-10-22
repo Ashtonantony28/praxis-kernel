@@ -1,6 +1,6 @@
 name: verifier
 model: sonnet
-mode: plan
+mode: build
 tools:
   - Read
   - Grep

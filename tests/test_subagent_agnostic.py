@@ -151,11 +151,11 @@ class TestAgentDefinitionLoading:
 
     def test_plan_mode_agents(self):
         plan_agents = {a.name for a in load_all() if a.mode == "plan"}
-        assert plan_agents == {"scout", "planner", "verifier", "scribe"}
+        assert plan_agents == {"scout", "planner"}
 
     def test_build_mode_agents(self):
         build_agents = {a.name for a in load_all() if a.mode == "build"}
-        assert build_agents == {"builder"}
+        assert build_agents == {"builder", "scribe", "verifier"}
 
 
 # ---------------------------------------------------------------------------

@@ -259,15 +259,14 @@ def enforce(
          commands that would write outside workspace blocked; interpreter
          -c/-e file-write bypass pattern blocked.
       4. WebResearch — same domain check as NETWORK_TOOLS.
-      5. Mode-based tool blocking (defense-in-depth layer 2) — runs after
-         all §5 checks so §5 rules always take precedence.
+      5. Mode.permits (tool and tool:action entries, allowed_tools) — runs
+         after all §5 checks so §5 rules always take precedence.
     """
     workspace_root = _workspace_root()
     allowed_domains = _allowed_domains()
 
     if tool_name in NETWORK_TOOLS:
         _check_network_tool(tool_name, tool_input, allowed_domains)
-        return  # no further checks needed for pure network tools
 
     if tool_name in MUTATING_FILE_TOOLS:
         path = tool_input.get("file_path") or tool_input.get("notebook_path")
@@ -284,7 +283,10 @@ def enforce(
 
     # Mode-based tool blocking (defense-in-depth layer 2)
     # Runs after all §5 boundary checks so §5 rules always take precedence.
-    if mode is not None and tool_name in mode.denied_tools:
-        raise EnforcementError(
-            f"Tool '{tool_name}' is denied in '{mode.name}' mode"
-        )
+    if mode is not None:
+        from praxis.policy import ToolCall
+
+        call = ToolCall(tool_name, tool_input)
+        if not mode.permits(call):
+            label = f"{tool_name}:{call.action}" if call.action else tool_name
+            raise EnforcementError(f"Tool '{label}' is denied in '{mode.name}' mode")

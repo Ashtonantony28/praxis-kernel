@@ -349,3 +349,87 @@ class TestAgentDefinitionModeRouting:
         call_kwargs = runtime.spawn_subagent.call_args[1]
         assert call_kwargs["mode"] is not None
         assert call_kwargs["mode"].name == "plan"
+
+
+# ---------------------------------------------------------------------------
+# SG3 — inheritance: child = parent.restrict(child), Agent gating, definitions
+# ---------------------------------------------------------------------------
+
+
+class TestModeInheritance:
+    def _spawn_mode(self, orch, runtime, name, parent):
+        with patch("praxis.agents.loader.load", side_effect=FileNotFoundError("no yaml")):
+            result = orch.run_subagent(name, "go", parent_mode=parent)
+        return result, (runtime.spawn_subagent.call_args.kwargs["mode"] if runtime.spawn_subagent.called else None)
+
+    def test_plan_parent_blocks_builder(self, workspace):
+        from praxis.modes import Mode
+
+        orch, runtime = _make_orch(workspace)
+        result, _ = self._spawn_mode(orch, runtime, "builder", Mode.load("plan"))
+        assert result.startswith("BLOCKED")
+        runtime.spawn_subagent.assert_not_called()
+
+    def test_plan_parent_restricts_scout(self, workspace):
+        from praxis.modes import Mode
+        from praxis.policy import ToolCall
+
+        orch, runtime = _make_orch(workspace)
+        _, mode = self._spawn_mode(orch, runtime, "scout", Mode.load("plan"))
+        assert mode.name == "plan"
+        assert mode.permits(ToolCall("Read", {}))
+        assert not mode.permits(ToolCall("Grep", {}))  # outside scout's tool list
+
+    def test_override_cannot_widen_parent(self, workspace):
+        from praxis.modes import Mode
+        from praxis.policy import ToolCall
+
+        orch, runtime = _make_orch(workspace, agent_modes={"scout": "build"})
+        _, mode = self._spawn_mode(orch, runtime, "scout", Mode.load("plan"))
+        assert not mode.permits(ToolCall("Write", {}))
+        assert not mode.permits(ToolCall("linear", {"action": "create_issue"}))
+
+    def test_build_parent_child_keeps_own_mode(self, workspace):
+        from praxis.modes import Mode
+        from praxis.policy import ToolCall
+
+        orch, runtime = _make_orch(workspace)
+        _, mode = self._spawn_mode(orch, runtime, "scout", Mode.load("build"))
+        assert mode.name == "build>plan"
+        assert not mode.permits(ToolCall("Write", {}))
+
+    def test_allowed_tools_parent_blocks_agent_outside_list(self, workspace):
+        from praxis.modes import Mode
+
+        orch, runtime = _make_orch(workspace)
+        result, _ = self._spawn_mode(orch, runtime, "builder", Mode(name="ro", allowed_tools=frozenset({"Read", "Agent"})))
+        assert result.startswith("BLOCKED")
+
+    def test_yaml_path_blocked_too(self, workspace):
+        from praxis.modes import Mode
+
+        orch, runtime = _make_orch(workspace)
+        result = orch.run_subagent("builder", "go", parent_mode=Mode.load("plan"))
+        assert result.startswith("BLOCKED")
+        runtime.spawn_subagent.assert_not_called()
+
+
+class TestDefinitionConsistency:
+    @pytest.mark.parametrize("name", ["scout", "planner", "builder", "scribe", "verifier"])
+    def test_mode_permits_every_declared_tool(self, name):
+        from praxis.agents.loader import load
+        from praxis.modes import Mode
+        from praxis.policy import ToolCall
+
+        agent = load(name)
+        mode = Mode.load(agent.mode)
+        assert all(mode.permits(ToolCall(t, {})) for t in agent.tools), (agent.mode, agent.tools)
+
+    @pytest.mark.parametrize("name", ["scout", "planner", "builder", "scribe", "verifier"])
+    def test_generated_shim_matches_yaml(self, name):
+        from praxis.agents.loader import load
+        from praxis.subagents import parse_agent_file
+
+        agent = load(name)
+        shim = parse_agent_file(Path(__file__).resolve().parent.parent / ".claude" / "agents" / f"{name}.md")
+        assert (shim.mode, shim.tools) == (agent.mode, agent.tools)

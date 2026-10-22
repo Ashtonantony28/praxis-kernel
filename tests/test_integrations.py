@@ -485,6 +485,7 @@ class TestOrchestratorIntegration:
     def test_orchestrator_dispatches_integration_tool(self, workspace):
         """Integration tools are reachable via _execute_with_hook."""
         from praxis.orchestrator import Orchestrator
+        from praxis.policy import ToolCall, context_from_env
         from tests.conftest import FakeClient, FakeResponse, FakeTextBlock
         from praxis.runtime.claude_code import ClaudeCodeRuntime
 
@@ -499,11 +500,12 @@ class TestOrchestratorIntegration:
         orch = Orchestrator(runtime, ws_config)
 
         with patch("shutil.which", return_value=None):
-            result = orch._execute_with_hook("GitHub", {"action": "pr_list"})
+            result = orch._execute_with_hook(ToolCall("GitHub", {"action": "pr_list"}), context_from_env())
         assert "not installed" in result  # proves dispatch reached github.py
 
     def test_unknown_tool_still_errors(self, workspace):
         from praxis.orchestrator import Orchestrator
+        from praxis.policy import ToolCall, context_from_env
         from tests.conftest import FakeClient, FakeResponse, FakeTextBlock
         from praxis.runtime.claude_code import ClaudeCodeRuntime
 
@@ -517,7 +519,7 @@ class TestOrchestratorIntegration:
         runtime = ClaudeCodeRuntime(client)
         orch = Orchestrator(runtime, ws_config)
 
-        result = orch._execute_with_hook("NoSuchTool", {})
+        result = orch._execute_with_hook(ToolCall("NoSuchTool", {}), context_from_env())
         assert "unknown tool" in result
 
 

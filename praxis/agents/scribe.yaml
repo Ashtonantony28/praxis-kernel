@@ -1,6 +1,6 @@
 name: scribe
 model: haiku
-mode: plan
+mode: build
 tools:
   - Read
   - Edit
