@@ -41,7 +41,7 @@ Measured by `python scripts/bench_policy.py` and `python scripts/bench_queue.py`
 | SG2 | Unified policy engine (hook + enforce) | builder-sg2 | SG1 | not started |
 | SG3 | Mode semantics and subagent inheritance | builder-sg3 | SG1, SG2 | not started |
 | SG4 | Governed Claude Code CLI runtime | builder-sg4 | SG2, SG3 | not started |
-| SG5 | Approval integrity | builder-sg5 | SG1 | not started |
+| SG5 | Approval integrity | builder-sg5 | SG1 | done |
 | SG6 | Queue and daemon robustness | builder-sg6 | SG1 | not started |
 | SG7 | Untrusted input channels and gateway auth | builder-sg7 | SG2, SG3 | not started |
 | SG8 | Cross-process events and Telegram wiring | builder-sg8 | SG6 | not started |

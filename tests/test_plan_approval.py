@@ -342,6 +342,58 @@ class TestApprovePlanCommand:
 # ---------------------------------------------------------------------------
 
 
+class TestApprovePlanIntegrity:
+    """SG5: --approve-plan requires pending status and replays the original task."""
+
+    def _run_approve_plan(self, tmp_path: Path, plan_id: str, orch=None):
+        from praxis.__main__ import main
+
+        mock_orch = orch or MagicMock()
+        with (
+            patch("sys.argv", ["praxis", "--approve-plan", plan_id]),
+            patch.dict(os.environ, {"PRAXIS_WORKSPACE_ROOT": str(tmp_path)}),
+            patch("praxis.__main__.Config") as mock_config_cls,
+            patch("praxis.__main__.ConvergenceConfig"),
+            patch("praxis.__main__.Orchestrator", return_value=mock_orch),
+            patch("praxis.__main__._create_runtimes", return_value=(MagicMock(), {})),
+            patch("praxis.__main__._run_credential_check"),
+        ):
+            mock_config_cls.from_env.return_value = MagicMock(workspace_root=tmp_path)
+            main()
+        return mock_orch
+
+    def test_approve_rejected_plan_refused(self, tmp_path, workspace):
+        plans_dir = tmp_path / ".praxis" / "staging" / "plans"
+        plan_id = str(uuid.uuid4())
+        plan_file = _write_pending_plan(plans_dir, plan_id)
+        data = json.loads(plan_file.read_text())
+        data["status"] = "rejected"
+        plan_file.write_text(json.dumps(data))
+
+        orch = MagicMock()
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_approve_plan(tmp_path, plan_id, orch)
+        assert exc_info.value.code == 1
+        orch.run.assert_not_called()
+        assert json.loads(plan_file.read_text())["status"] == "rejected"
+
+    def test_history_not_duplicated_on_replay(self, workspace):
+        orch = _make_orch(workspace)
+        orch._conv_log = MagicMock()
+        orch._conv_log.recent.return_value = [
+            {"ts": "2026-10-01T00:00:00", "task_type": "task", "prompt": "earlier", "outcome": "ok"}
+        ]
+        orch.run("original task", mode=Mode.load("plan"))
+
+        (plan_file,) = (workspace / ".praxis" / "staging" / "plans").glob("*.json")
+        assert json.loads(plan_file.read_text())["task"] == "original task"
+
+        self._run_approve_plan(workspace, plan_file.stem, orch)
+        sent = orch.runtime.run_loop.call_args.kwargs["user_message"]
+        assert sent.count("Recent interactions:") == 1
+        assert sent.endswith("original task")
+
+
 class TestRejectPlanCommand:
     """--reject-plan <id> CLI command."""
 

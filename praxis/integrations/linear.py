@@ -11,18 +11,16 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from ..config import Config
+from .. import staging as _staging
 
 _LINEAR_API_URL = "https://api.linear.app/graphql"
 _LINEAR_DOMAIN = "api.linear.app"
-_STAGING_FILENAME = "external_actions.jsonl"
 
 
 def _get_api_key() -> str | None:
@@ -63,24 +61,7 @@ def _linear_query(query: str, variables: dict, api_key: str) -> str:
 
 def _stage_action(provider: str, action: str, params: dict, workspace_root: Path) -> str:
     """Append a staged action to external_actions.jsonl."""
-    staging_dir = workspace_root / ".praxis" / "staging"
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    staging_file = staging_dir / _STAGING_FILENAME
-    entry = {
-        "id": str(uuid.uuid4()),
-        "provider": provider,
-        "action": action,
-        "params": params,
-        "queued_at": datetime.now(timezone.utc).isoformat(),
-        "status": "pending",
-    }
-    with staging_file.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-    return (
-        f"Staged {provider} '{action}' action for human review. "
-        f"Run 'python -m praxis --approve' to review and execute. "
-        f"(Staged to: {staging_file})"
-    )
+    return _staging.stage_action(provider, action, params, workspace_root)
 
 
 _LIST_ISSUES_QUERY = """

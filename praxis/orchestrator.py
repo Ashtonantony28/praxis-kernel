@@ -69,6 +69,7 @@ class Orchestrator:
                 return self._stage_low_confidence_plan(user_message, _check, _conf_threshold)
 
         all_schemas = get_tool_schemas() + get_integration_schemas()
+        original_message = user_message
 
         # Prepend recent interactions to context (max 500 tokens ≈ 2000 chars)
         _recent = self._conv_log.recent(5)
@@ -129,7 +130,7 @@ class Orchestrator:
             plan_file = plans_dir / f"{plan_id}.json"
             plan_entry = {
                 "id": plan_id,
-                "task": user_message,
+                "task": original_message,
                 "plan_text": result,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "status": "pending",
