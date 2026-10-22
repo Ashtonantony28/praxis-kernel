@@ -493,22 +493,19 @@ def _apply_approval_action(root: Path, approval_id: str, action: str) -> dict | 
     staging = root / ".praxis" / "staging"
 
     # 1. Search external_actions.jsonl
-    actions_file = staging / "external_actions.jsonl"
-    if actions_file.exists():
-        entries: list[dict] = []
-        found_entry: dict | None = None
-        for line in actions_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = _json.loads(line)
-                entries.append(e)
-                if e.get("id") == approval_id:
-                    found_entry = e
-            except _json.JSONDecodeError:
-                pass
-        if found_entry is not None:
+    from . import staging as _staging
+
+    actions_file = staging / _staging.STAGING_FILENAME
+    entries = _staging.read_entries(actions_file)
+    found_entry = next((e for e in entries if e.get("id") == approval_id), None)
+    if found_entry is not None:
+        if found_entry.get("status") != "pending":
+            return dict(found_entry)
+        signed_ok = _staging.verify(found_entry)
+        if action == "approve" and not signed_ok:
+            found_entry["status"] = "rejected"
+            found_entry["_tamper_detected"] = True
+        else:
             found_entry["status"] = new_status
             if action == "approve":
                 try:
@@ -517,11 +514,10 @@ def _apply_approval_action(root: Path, approval_id: str, action: str) -> dict | 
                     found_entry["executed_result"] = result
                 except Exception as exc:
                     found_entry["executed_result"] = f"error: {exc}"
-            # Rewrite file
-            with actions_file.open("w", encoding="utf-8") as f:
-                for e in entries:
-                    f.write(_json.dumps(e) + "\n")
-            return dict(found_entry)
+            if signed_ok:
+                _staging.resign(found_entry)
+        _staging.write_entries(actions_file, entries)
+        return dict(found_entry)
 
     # 2. Search wiki_updates.jsonl
     wiki_file = staging / "wiki_updates.jsonl"
