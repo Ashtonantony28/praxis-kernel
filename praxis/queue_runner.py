@@ -16,6 +16,8 @@ from .orchestrator import Orchestrator
 from .queue import Task, TaskQueue
 from .runtime import ClaudeCodeCLIRuntime, ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
 from .runtime.base import Runtime
+from .runtime.cost import CostCircuitBreaker
+from .staging import task_scope
 
 
 _shutdown_requested = False
@@ -89,35 +91,84 @@ def _run_single_task(
     """Execute a single task, with checkpoint support for multi-stage tasks.
 
     When conv, all_runtimes, and config are provided, detects the task type
-    from the prompt and routes to the appropriate runtime if configured.
+    from the prompt and routes to the appropriate runtime and model if configured.
+    Each task gets a fresh cost breaker (task.cost_budget_usd or the global default)
+    and a staging scope keyed on its id, so retries do not re-stage actions.
     """
-    # Task-type routing: select runtime based on detected task type
     task_orch = orch
+    model = None
     if conv is not None and all_runtimes is not None and config is not None:
         task_type = detect_task_type(task.prompt)
+        model = conv.model_for_task_type(task_type)
         runtime_name = conv.runtime_for_task_type(task_type)
         if runtime_name != conv.default_runtime and runtime_name in all_runtimes:
             sys.stderr.write(
                 f"[praxis] task {task.id}: type={task_type!r}, "
                 f"routing to runtime={runtime_name!r}\n"
             )
-            task_orch = Orchestrator(all_runtimes[runtime_name], config)
+            task_orch = Orchestrator(
+                all_runtimes[runtime_name],
+                config,
+                runtime_overrides=getattr(orch, "runtime_overrides", None),
+                agent_modes=getattr(orch, "agent_modes", None),
+            )
 
-    if task.stages:
-        _run_staged_task(task, task_orch, queue, cp_store)
-    else:
-        _run_atomic_task(task, task_orch, queue, notifier=notifier)
+    _reset_cost_breakers(task_orch, all_runtimes, task.cost_budget_usd)
+    with task_scope(task.id):
+        if task.stages:
+            _run_staged_task(task, task_orch, queue, cp_store)
+        else:
+            _run_atomic_task(task, task_orch, queue, notifier=notifier, model=model)
 
 
-def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue, *, notifier=None) -> None:
+def _reset_cost_breakers(orch, all_runtimes: "dict[str, Runtime] | None", budget: float | None) -> None:
+    runtimes = [getattr(orch, "runtime", None), *dict(getattr(orch, "runtime_overrides", None) or {}).values(),
+                *(all_runtimes or {}).values()]
+    for rt in {id(r): r for r in runtimes if r is not None}.values():
+        if hasattr(rt, "_cost_breaker"):
+            rt._cost_breaker = (
+                CostCircuitBreaker(budget) if budget is not None else CostCircuitBreaker.from_env()
+            )
+
+
+def _run_task_guarded(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store: CheckpointStore, **kw) -> None:
+    """Task boundary: any BaseException fails this task only; KeyboardInterrupt still propagates."""
+    try:
+        _run_single_task(task, orch, queue, cp_store, **kw)
+    except BaseException as exc:
+        _fail_unfinished(queue, task.id, exc)
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+
+
+def _describe(exc: BaseException) -> str:
+    return str(exc) if isinstance(exc, Exception) else f"{type(exc).__name__}: {exc}"
+
+
+def _fail_unfinished(queue: TaskQueue, task_id: str, exc: BaseException) -> None:
+    sys.stderr.write(f"[praxis] task {task_id} aborted: {_describe(exc)}\n")
+    try:
+        current = next((t for t in queue._read_all() if t.id == task_id), None)
+        if current is None or current.status not in ("done", "failed"):
+            queue.update(task_id, status="failed", error=_describe(exc))
+    except Exception as inner:
+        sys.stderr.write(f"[praxis] could not mark task {task_id} failed: {inner}\n")
+
+
+def _run_atomic_task(
+    task: Task, orch: Orchestrator, queue: TaskQueue, *, notifier=None, model: str | None = None
+) -> None:
     """Run a task as a single orchestrator call, with exponential backoff on failure.
 
     Retries up to _TASK_MAX_RETRIES times (env: PRAXIS_TASK_MAX_RETRIES, default 3).
     Backoff: initial 5 s (PRAXIS_TASK_INITIAL_BACKOFF_SECONDS), doubles each attempt,
     capped at 60 s (PRAXIS_TASK_MAX_BACKOFF_SECONDS).
     After all retries exhausted, task is dead-lettered to queue_dir/dead_letter.jsonl.
+    A BaseException (SystemExit, cost trip, KeyboardInterrupt) is not retried: the task
+    is dead-lettered at once, and KeyboardInterrupt is re-raised afterwards.
     """
-    queue.update_status(task.id, "running")
+    if task.status != "running":
+        queue.update(task.id, status="running")
     try:
         from .event_bus import TASK_STARTED, get_event_bus
         get_event_bus().publish_sync(TASK_STARTED, {"task_id": task.id})
@@ -125,11 +176,13 @@ def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue, *, notifi
         pass
     sys.stderr.write(f"[praxis] running task {task.id}: {task.prompt[:80]}\n")
 
-    last_exc: Exception | None = None
+    last_exc: BaseException | None = None
+    attempts = 0
     for attempt in range(_TASK_MAX_RETRIES):
+        attempts = attempt + 1
         try:
-            result = orch.run(task.prompt)
-            queue.update_status(task.id, "done", result=result)
+            result = orch.run(task.prompt, model=model) if model else orch.run(task.prompt)
+            queue.update(task.id, status="done", result=result)
             try:
                 from .event_bus import TASK_COMPLETED, get_event_bus
                 get_event_bus().publish_sync(TASK_COMPLETED, {"task_id": task.id})
@@ -166,13 +219,15 @@ def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue, *, notifi
                     f"retrying in {backoff:.1f}s\n"
                 )
                 time.sleep(backoff)
+        except BaseException as exc:
+            last_exc = exc
+            break
 
-    # All retries exhausted
-    error_str = str(last_exc) if last_exc else "unknown error"
+    error_str = _describe(last_exc) if last_exc else "unknown error"
     sys.stderr.write(
-        f"[praxis] task {task.id} exhausted {_TASK_MAX_RETRIES} retries; moving to dead letter\n"
+        f"[praxis] task {task.id} failed after {attempts} attempt(s); moving to dead letter\n"
     )
-    queue.move_to_dead_letter(task, error_str, _TASK_MAX_RETRIES)
+    queue.move_to_dead_letter(task, error_str, attempts)
     try:
         from .event_bus import TASK_FAILED, get_event_bus
         get_event_bus().publish_sync(TASK_FAILED, {"task_id": task.id})
@@ -196,6 +251,8 @@ def _run_atomic_task(task: Task, orch: Orchestrator, queue: TaskQueue, *, notifi
             notifier.notify_task_complete(task.prompt, "failed", error_str)
         except Exception:
             pass
+    if isinstance(last_exc, KeyboardInterrupt):
+        raise last_exc
 
 
 def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store: CheckpointStore) -> None:
@@ -204,7 +261,8 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
     if cp is None:
         cp = Checkpoint(task_id=task.id, stages=task.stages)
 
-    queue.update_status(task.id, "running")
+    if task.status != "running":
+        queue.update(task.id, status="running")
     try:
         from .event_bus import TASK_STARTED, get_event_bus
         get_event_bus().publish_sync(TASK_STARTED, {"task_id": task.id})
@@ -242,15 +300,17 @@ def _run_staged_task(task: Task, orch: Orchestrator, queue: TaskQueue, cp_store:
         cp_store.remove(task.id)
         sys.stderr.write(f"[praxis] task {task.id} done (all stages)\n")
 
-    except Exception as exc:
+    except BaseException as exc:
         cp_store.save(cp)
-        queue.update_status(task.id, "failed", error=str(exc))
+        queue.update(task.id, status="failed", error=_describe(exc))
         try:
             from .event_bus import TASK_FAILED, get_event_bus
             get_event_bus().publish_sync(TASK_FAILED, {"task_id": task.id})
         except Exception:
             pass
-        sys.stderr.write(f"[praxis] task {task.id} failed at stage: {exc}\n")
+        sys.stderr.write(f"[praxis] task {task.id} failed at stage: {_describe(exc)}\n")
+        if isinstance(exc, KeyboardInterrupt):
+            raise
 
 
 def _start_scheduler_thread(queue: TaskQueue, workspace_root: Path) -> None:
@@ -375,7 +435,9 @@ def run_queue_loop(workspace: Path) -> None:
     config = Config.from_env()
     conv = ConvergenceConfig.load(config.workspace_root)
     default_runtime, runtime_overrides, all_runtimes = _create_runtimes_for_queue(conv)
-    orch = Orchestrator(default_runtime, config, runtime_overrides=runtime_overrides)
+    orch = Orchestrator(
+        default_runtime, config, runtime_overrides=runtime_overrides, agent_modes=conv.agent_modes
+    )
 
     queue_dir = workspace / ".praxis" / "queue"
     queue = TaskQueue(queue_dir)
@@ -407,23 +469,20 @@ def run_queue_loop(workspace: Path) -> None:
         except Exception:
             pass
 
-    max_concurrent = int(os.environ.get("PRAXIS_MAX_CONCURRENT_TASKS", "3"))
     sys.stderr.write(f"[praxis] queue loop started, polling every {poll_interval}s\n")
-    sys.stderr.write(f"[praxis] queue loop: max_concurrent={max_concurrent}\n")
 
+    # Tasks run one at a time: runtimes and their per-task cost breakers are shared.
     while not _shutdown_requested:
-        # Rate limit: do not start a new task if too many are already running
-        running = queue.stats().get("running", 0)
-        if running >= max_concurrent:
-            time.sleep(poll_interval)
-            continue
-
-        task = queue.next_pending()
+        try:
+            task = queue.claim()
+        except Exception as exc:
+            sys.stderr.write(f"[praxis] queue claim failed: {exc}\n")
+            task = None
         if task is None:
             time.sleep(poll_interval)
             continue
 
-        _run_single_task(
+        _run_task_guarded(
             task, orch, queue, cp_store,
             conv=conv,
             all_runtimes=all_runtimes,

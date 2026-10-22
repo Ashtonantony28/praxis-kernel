@@ -61,7 +61,7 @@ def _linear_query(query: str, variables: dict, api_key: str) -> str:
 
 def _stage_action(provider: str, action: str, params: dict, workspace_root: Path) -> str:
     """Append a staged action to external_actions.jsonl."""
-    return _staging.stage_action(provider, action, params, workspace_root)
+    return _staging.stage_action(provider, action, params, workspace_root, task_id=_staging.current_task_id())
 
 
 _LIST_ISSUES_QUERY = """

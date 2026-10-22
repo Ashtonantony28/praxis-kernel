@@ -64,7 +64,7 @@ def _notion_request(method: str, path: str, body: dict | None, token: str) -> st
 
 def _stage_action(provider: str, action: str, params: dict, workspace_root: Path) -> str:
     """Append a staged action to external_actions.jsonl. Return confirmation."""
-    return _staging.stage_action(provider, action, params, workspace_root)
+    return _staging.stage_action(provider, action, params, workspace_root, task_id=_staging.current_task_id())
 
 
 def _search(args: dict[str, Any], config: Config) -> str:

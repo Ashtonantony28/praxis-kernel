@@ -61,7 +61,7 @@ def _resolve_workspace_root(wiki_root: Path | None, config: Config | None) -> Pa
 
 def _stage_external(provider: str, action: str, params: dict, workspace_root: Path) -> str:
     """Append a staged write action to external_actions.jsonl. Returns confirmation."""
-    return _staging.stage_action(provider, action, params, workspace_root)
+    return _staging.stage_action(provider, action, params, workspace_root, task_id=_staging.current_task_id())
 
 
 # ---------------------------------------------------------------------------
