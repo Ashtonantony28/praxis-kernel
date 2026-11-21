@@ -17,6 +17,7 @@ from .queue import Task, TaskQueue
 from .runtime import ClaudeCodeCLIRuntime, ClaudeCodeRuntime, LocalRuntime, OpenAICloudRuntime
 from .runtime.base import Runtime
 from .modes import Mode
+from .policy import origin_scope
 from .runtime.cost import CostCircuitBreaker
 from .staging import task_scope
 
@@ -115,7 +116,7 @@ def _run_single_task(
             )
 
     _reset_cost_breakers(task_orch, all_runtimes, task.cost_budget_usd)
-    with task_scope(task.id):
+    with task_scope(task.id), origin_scope(task.origin):
         if task.stages:
             _run_staged_task(task, task_orch, queue, cp_store)
         else:

@@ -437,7 +437,7 @@ class TestTelemetryWiring:
         """If TelemetryStore.get_global() raises, execute_tool() still returns results."""
         TelemetryStore.reset_global()
         runtime = ClaudeCodeRuntime(MagicMock())
-        block = _FakeToolUseBlock(name="Write", input={"path": "f", "content": "x"}, id="tc3")
+        block = _FakeToolUseBlock(name="Write", input={"file_path": "f", "content": "x"}, id="tc3")
 
         with patch(
             "praxis.runtime.claude_code.TelemetryStore" if False else

@@ -46,8 +46,10 @@ def run_pretool_hook(
 
     Returns HookResult with allowed=True if the tool may proceed.
     """
-    if not config.hook_path.exists():
-        return HookResult(allowed=True)
+    if not config.hook_path.exists():  # fail closed (SG2): a missing hook is not a pass
+        reason = f"§5 hook missing at {config.hook_path}"
+        _log_denial(config, tool_name, tool_input, reason)
+        return HookResult(allowed=False, reason=reason)
 
     event = json.dumps({"tool_name": tool_name, "tool_input": tool_input})
 

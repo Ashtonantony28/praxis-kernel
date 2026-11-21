@@ -27,7 +27,7 @@ TABLE: list[tuple[str, str, dict, str | None, str]] = [
     ("write", "Write", {"file_path": f"{WS}/tests/test_new.py", "content": "def test_x():\n    pass\n"}, "build", "cli"),
     ("write", "Write", {"file_path": f"{WS}/deep/nested/dir/file.json", "content": "{}"}, "build", "queue"),
     ("write", "Write", {"file_path": "docs/guide.md", "content": "# Guide\n"}, "build", "cli"),
-    ("edit", "Edit", {"file_path": "praxis/policy.py", "old_string": "a", "new_string": "b"}, None, "cli"),
+    ("edit", "Edit", {"file_path": "praxis/tools.py", "old_string": "a", "new_string": "b"}, None, "cli"),
     ("edit", "Edit", {"file_path": "README.md", "old_string": "x", "new_string": "y"}, "build", "cli"),
     ("edit", "Edit", {"file_path": f"{WS}/praxis/queue.py", "old_string": "a", "new_string": "b"}, "build", "queue"),
     ("edit", "Edit", {"file_path": f"{WS}/pyproject.toml", "old_string": "a", "new_string": "b"}, None, "cli"),

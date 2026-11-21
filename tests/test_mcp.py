@@ -224,7 +224,7 @@ class TestMCPHookIntegration:
         with patch("praxis.mcp_server.run_pretool_hook", return_value=HookResult(allowed=True)):
             server = MCPServer(config)
             handler = server._make_handler("Read", mock_impl)
-            result = handler(file_path="/workspace/file.txt")
+            result = handler(file_path=str(config.workspace_root / "file.txt"))
         assert result == "allowed output"
         mock_impl.assert_called_once()
 
