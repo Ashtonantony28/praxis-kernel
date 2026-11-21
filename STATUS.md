@@ -219,3 +219,14 @@ All Phase I Session 3 items delivered:
 - praxis/setup_wizard.py: added STEP 5a/17 (Linear), STEP 5b/17 (Notion), STEP 5c/17 (Calendar); all steps renumbered from X/14 → X/17; old steps 5-14 shifted to 8-17; additive domain appending (check-before-append) for all three; summary table updated
 - tests/test_setup_wizard.py: added TestLinearStep (3 tests), TestNotionStep (3 tests), TestCalendarStep (3 tests); all existing 28 tests updated to include 3 extra "n" answers in their input sequences for the new optional prompts
 - All existing tests still pass; new tests cover key-written-when-y, nothing-written-when-n, domain-not-duplicated
+
+### NEEDS HUMAN: install the SG2 hook (2026-11-21)
+The SG2 hook is a thin caller of `praxis.policy.evaluate`, so the hook and `enforce()` give the same verdicts and fail closed. PLAN.md approves agent edits of `.claude/hooks/` for SG2, but the auto-mode safety classifier refused the edit, so the file ships at `scripts/hooks/escalation-boundary.py`. From the repo root:
+
+```bash
+cp scripts/hooks/escalation-boundary.py .claude/hooks/escalation-boundary.py
+sed -i 's/057f07f223fd5b5fe11f2aa50af1e361/2f1788a319a2f3c5767dc66a158e8543/' init.sh
+python -m pytest tests/test_policy_parity.py -q   # test_installed_hook_is_sg2 now passes instead of skipping
+```
+
+After this, agents can no longer edit the policy engine files (`praxis/policy.py`, `praxis/config.py`, `praxis/__init__.py`, `praxis/runtime/enforcement.py`) or `convergence.yaml`; those changes come to the owner, as §5 requires for permission rules.

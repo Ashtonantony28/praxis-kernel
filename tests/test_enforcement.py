@@ -123,12 +123,13 @@ class TestEnforceDirect:
         with pytest.raises(EnforcementError, match="PRAXIS_WORKSPACE_ROOT is unset"):
             enforce("Write", {"file_path": "/tmp/x.txt", "content": ""})
 
-    def test_read_tool_not_blocked(self, tmp_path, monkeypatch):
-        """Read is a read-only tool — enforcement must not block it regardless of path."""
+    def test_read_outside_workspace_blocked(self, tmp_path, monkeypatch):
+        """SG2: Read is confined to WORKSPACE_ROOT."""
         monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
         monkeypatch.setenv("PRAXIS_ALLOWED_DOMAINS", "")
-        # Must not raise even for paths outside workspace
-        enforce("Read", {"file_path": "/etc/passwd"})
+        with pytest.raises(EnforcementError, match="outside WORKSPACE_ROOT"):
+            enforce("Read", {"file_path": "/etc/passwd"})
+        enforce("Read", {"file_path": str(tmp_path / "notes.md")})
 
     def test_edit_outside_workspace_blocked(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
@@ -338,15 +339,15 @@ class TestCrossRuntimeEnforcement:
         assert not self._is_blocked(results), f"Expected allowed, got BLOCKED: {results}"
 
     @pytest.mark.parametrize("make_runtime", RUNTIME_FACTORIES)
-    def test_read_tool_always_allowed(self, make_runtime, tmp_path, monkeypatch):
-        """Read is never blocked by enforcement — even outside workspace."""
+    def test_read_inside_workspace_allowed(self, make_runtime, tmp_path, monkeypatch):
+        """Read inside WORKSPACE_ROOT is allowed (SG2 confines it to the workspace)."""
         monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path))
         monkeypatch.setenv("PRAXIS_ALLOWED_DOMAINS", "")
         runtime = make_runtime(tmp_path)
         tool_executor = MagicMock(return_value="file contents")
 
         results = self._run(
-            runtime, "Read", {"file_path": "/etc/passwd"}, tool_executor
+            runtime, "Read", {"file_path": str(tmp_path / "notes.md")}, tool_executor
         )
 
         tool_executor.assert_called_once()

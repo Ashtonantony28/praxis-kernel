@@ -47,7 +47,7 @@ def test_allow_minimum():
     assert sum(c["expect"] == "allow" for c in CASES) >= 50
 
 
-# TODO(SG1): block corpus (>= 200 cases) is pending the owner; add a minimum once it lands.
+# Block cases are unit tests in test_policy_bypass.py (owner decision 2026-11-21), not a corpus.
 
 
 @pytest.mark.parametrize("case", list(_params()))

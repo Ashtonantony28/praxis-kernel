@@ -74,15 +74,15 @@ def test_hook_allows_read_anywhere(config: Config):
     assert result.allowed
 
 
-def test_hook_missing_file_allows(tmp_path: Path):
+def test_hook_missing_file_blocks(tmp_path: Path):
     cfg = Config(
         workspace_root=tmp_path,
         memory_root=tmp_path / ".praxis" / "memory",
         hook_path=tmp_path / "nonexistent.py",
         allowed_domains=frozenset(),
     )
-    result = run_pretool_hook(cfg, "Write", {"file_path": "/tmp/x", "content": ""})
-    assert result.allowed
+    result = run_pretool_hook(cfg, "Write", {"file_path": str(tmp_path / "x"), "content": ""})
+    assert not result.allowed and "hook missing" in (result.reason or "")
 
 
 # -- Space-in-path and relative-path regression tests ------------------------

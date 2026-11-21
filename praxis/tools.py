@@ -194,10 +194,21 @@ def execute_write(args: dict[str, Any], config: Config) -> str:
     return f"Wrote {path}"
 
 
+def _grep_secret_excludes() -> list[str]:
+    from .policy import SECRET_DIRS, SECRET_NAMES, SECRET_SUFFIXES
+
+    return ([f"--exclude={n}" for n in sorted(SECRET_NAMES)] + ["--exclude=.env.*"]
+            + [f"--exclude=*{s}" for s in SECRET_SUFFIXES]
+            + [f"--exclude-dir={d}" for d in sorted(SECRET_DIRS)])
+
+
+_GREP_SECRET_EXCLUDES = _grep_secret_excludes()  # SG2: a directory search skips secrets files
+
+
 def execute_grep(args: dict[str, Any], config: Config) -> str:
     pattern = args["pattern"]
     search_path = args.get("path", str(config.workspace_root))
-    cmd = ["grep", "-rn", "--", pattern, search_path]
+    cmd = ["grep", "-rn", *_GREP_SECRET_EXCLUDES, "--", pattern, search_path]
     try:
         result = subprocess.run(
             cmd,

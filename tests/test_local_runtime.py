@@ -298,7 +298,7 @@ def test_execute_tool_parses_json_args():
             id="call_abc",
             function=FakeFunction(
                 name="Read",
-                arguments='{"file_path": "/tmp/test.txt"}',
+                arguments='{"file_path": "test.txt"}',
             ),
         )
     ]
@@ -314,7 +314,7 @@ def test_execute_tool_parses_json_args():
     assert results[0]["role"] == "tool"
     assert results[0]["tool_call_id"] == "call_abc"
     assert results[0]["content"] == "file contents"
-    assert received == [("Read", {"file_path": "/tmp/test.txt"})]
+    assert received == [("Read", {"file_path": "test.txt"})]
 
 
 def test_execute_tool_dict_form():

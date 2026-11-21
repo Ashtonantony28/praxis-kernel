@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run the policy corpus through evaluate() and report latency against the 1 ms p99 budget."""
+"""Run the policy corpus through evaluate() (p99 <= 1 ms) and the SG2 hook subprocess (p99 <= 80 ms)."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -18,6 +19,8 @@ from praxis.modes.base import Mode  # noqa: E402
 from praxis.policy import PolicyContext, ToolCall, evaluate  # noqa: E402
 
 BUDGET_P99_US = 1000.0
+HOOK_BUDGET_P99_MS = 80.0
+HOOK = REPO / "scripts" / "hooks" / "escalation-boundary.py"
 
 
 def _sub(value, root: str):
@@ -52,6 +55,7 @@ def load(root: Path) -> list[tuple[ToolCall, PolicyContext]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rounds", type=int, default=200)
+    parser.add_argument("--hook-runs", type=int, default=50)
     parser.add_argument("--assert-budget", action="store_true", help="exit 1 when p99 exceeds the budget")
     args = parser.parse_args()
 
@@ -70,9 +74,23 @@ def main() -> int:
     p50 = samples[len(samples) // 2] / 1000
     p99 = samples[min(len(samples) - 1, int(len(samples) * 0.99))] / 1000
     ok = p99 <= BUDGET_P99_US
-    print(f"n={len(samples)} cases={len(pairs)} p50={p50:.1f}us p99={p99:.1f}us "
+    print(f"evaluate: n={len(samples)} cases={len(pairs)} p50={p50:.1f}us p99={p99:.1f}us "
           f"budget={BUDGET_P99_US:.0f}us {'PASS' if ok else 'FAIL'}")
-    return 0 if ok or not args.assert_budget else 1
+
+    hook = []
+    event = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls -la"}})
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, "PRAXIS_WORKSPACE_ROOT": tmp}
+        for _ in range(args.hook_runs):
+            t0 = time.perf_counter()
+            subprocess.run([sys.executable, str(HOOK)], input=event, text=True, capture_output=True, env=env)
+            hook.append((time.perf_counter() - t0) * 1000)
+    hook.sort()
+    h50, h99 = hook[len(hook) // 2], hook[min(len(hook) - 1, int(len(hook) * 0.99))]
+    hook_ok = h99 <= HOOK_BUDGET_P99_MS
+    print(f"hook: n={len(hook)} p50={h50:.1f}ms p99={h99:.1f}ms budget={HOOK_BUDGET_P99_MS:.0f}ms "
+          f"{'PASS' if hook_ok else 'FAIL'}")
+    return 0 if (ok and hook_ok) or not args.assert_budget else 1
 
 
 if __name__ == "__main__":
